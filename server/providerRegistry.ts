@@ -17,6 +17,8 @@ const PROVIDERS = {
 const cache = new Map<number, { expiresAt: number; registry: ModelRegistry }>();
 const REQUEST_TIMEOUT_MS = 35_000;
 const FAST_COMPLETION_TOKEN_LIMIT = 360;
+const FIRST_TOKEN_TIMEOUT_MS = 4_500;
+const FAST_FREE_MODEL_PREFIXES = ["google/", "qwen/", "meta-llama/", "mistralai/", "cohere/"];
 
 function cleanBaseUrl(value: string) { return value.replace(/\/$/, ""); }
 function textContent(content: unknown) { return typeof content === "string" ? content : Array.isArray(content) ? content.map(item => typeof item === "object" && item && "text" in item ? String(item.text ?? "") : "").filter(Boolean).join("\n") : ""; }
@@ -57,6 +59,16 @@ export function buildProviderCompletionPayload(input: { providerId: ProviderId; 
   };
 }
 
+export function prioritizeFastFreeModels(models: CallableModel[]) {
+  return [...models].filter(model => model.providerId === "openrouter" && model.modelId !== "openrouter/free").sort((left, right) => {
+    const leftRank = FAST_FREE_MODEL_PREFIXES.findIndex(prefix => left.modelId.startsWith(prefix));
+    const rightRank = FAST_FREE_MODEL_PREFIXES.findIndex(prefix => right.modelId.startsWith(prefix));
+    const normalizedLeft = leftRank === -1 ? FAST_FREE_MODEL_PREFIXES.length : leftRank;
+    const normalizedRight = rightRank === -1 ? FAST_FREE_MODEL_PREFIXES.length : rightRank;
+    return normalizedLeft - normalizedRight || left.displayName.localeCompare(right.displayName);
+  });
+}
+
 export async function streamConfiguredModel(input: { userId: number; providerId: ProviderId; modelId: string; messages: ProviderMessage[] }, onChunk: (chunk: string) => void): Promise<CompletionResult> {
   await requireCallableModel(input.userId, input.providerId, input.modelId);
   if (input.providerId === "platform") throw new Error("Streaming is not available for the platform provider.");
@@ -84,8 +96,17 @@ export async function streamConfiguredModel(input: { userId: number; providerId:
   let buffer = "";
   let output = "";
   let usage: CompletionResult["usage"];
-  while (true) {
-    const { value, done } = await reader.read();
+  let receivedFirstToken = false;
+  let firstTokenTimedOut = false;
+  const firstTokenTimer = setTimeout(() => { if (!receivedFirstToken) { firstTokenTimedOut = true; controller.abort(); } }, FIRST_TOKEN_TIMEOUT_MS);
+  try {
+   while (true) {
+    let read: ReadableStreamReadResult<Uint8Array>;
+    try { read = await reader.read(); } catch (error) {
+      if (firstTokenTimedOut) throw new Error(`${PROVIDERS[input.providerId].name} did not start producing text within ${FIRST_TOKEN_TIMEOUT_MS / 1000}s. Trying another available free model.`);
+      throw error;
+    }
+    const { value, done } = read;
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
     let divider = buffer.indexOf("\n\n");
@@ -98,13 +119,14 @@ export async function streamConfiguredModel(input: { userId: number; providerId:
       try {
         const payload = JSON.parse(data) as { choices?: Array<{ delta?: { content?: unknown } }>; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } };
         const chunk = textContent(payload.choices?.[0]?.delta?.content);
-        if (chunk) { output += chunk; onChunk(chunk); }
+        if (chunk) { receivedFirstToken = true; clearTimeout(firstTokenTimer); output += chunk; onChunk(chunk); }
         if (payload.usage) usage = { promptTokens: payload.usage.prompt_tokens, completionTokens: payload.usage.completion_tokens, totalTokens: payload.usage.total_tokens };
       } catch {
         // Ignore malformed non-content SSE frames from the upstream provider.
       }
     }
-  }
+   }
+  } finally { clearTimeout(firstTokenTimer); }
   return { output, usage };
 }
 
@@ -172,6 +194,10 @@ export async function getModelRegistry(userId: number, options: { force?: boolea
   };
   cache.set(userId, { registry, expiresAt: Date.now() + 30_000 });
   return registry;
+}
+
+export async function getFastFreeCandidates(userId: number) {
+  return prioritizeFastFreeModels((await getModelRegistry(userId)).models).slice(0, 4);
 }
 
 export function clearModelRegistryCache(userId?: number) { if (userId === undefined) cache.clear(); else cache.delete(userId); }

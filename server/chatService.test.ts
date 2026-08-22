@@ -59,9 +59,9 @@ describe("chat execution service", () => {
     const compiled = compileExecutionPolicy(longPrompt);
     expect(compiled).toContain("Fast execution policy");
     expect(compiled?.length).toBeLessThan(longPrompt.length);
-    expect(compiled?.length).toBeLessThanOrEqual(1_800);
+    expect(compiled?.length).toBeLessThanOrEqual(800);
     expect(compiled?.startsWith("A")).toBe(true);
-    expect(compiled?.endsWith("B".repeat(300))).toBe(true);
+    expect(compiled?.endsWith("B".repeat(120))).toBe(true);
   });
 
   it("prepares a user-scoped streamed request through the free router while keeping the saved selection", async () => {

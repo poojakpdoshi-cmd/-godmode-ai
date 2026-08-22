@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildProviderCompletionPayload, CallableModel, describeProviderRequestFailure, describeProviderTransportFailure, isVerifiedFreeOpenRouterModel, ProviderDiagnostic, retainCallableModels } from "./providerRegistry";
+import { buildProviderCompletionPayload, CallableModel, describeProviderRequestFailure, describeProviderTransportFailure, isVerifiedFreeOpenRouterModel, prioritizeFastFreeModels, ProviderDiagnostic, retainCallableModels } from "./providerRegistry";
 
 const models: CallableModel[] = [
   { key: "platform:callable", providerId: "platform", providerName: "Platform catalog", modelId: "callable", displayName: "Callable", supportsTools: false, supportsVision: false, inputTypes: ["text"] },
@@ -42,5 +42,15 @@ describe("configured model registry", () => {
     expect(standard.max_completion_tokens).toBe(360);
     expect(standard).not.toHaveProperty("tools");
     expect(research).toMatchObject({ provider: { sort: "latency" }, tools: [{ type: "openrouter:web_search", parameters: { engine: "native", max_results: 3 } }] });
+  });
+
+  it("prioritizes known fast free-model families before an arbitrary catalog order", () => {
+    const candidates = prioritizeFastFreeModels([
+      { ...models[1], modelId: "cohere/slow-free", displayName: "Cohere" },
+      { ...models[1], modelId: "google/fast-free", displayName: "Gemini" },
+      { ...models[1], modelId: "qwen/fast-free", displayName: "Qwen" },
+      { ...models[1], modelId: "openrouter/free", displayName: "Router" },
+    ]);
+    expect(candidates.map(model => model.modelId)).toEqual(["google/fast-free", "qwen/fast-free", "cohere/slow-free"]);
   });
 });

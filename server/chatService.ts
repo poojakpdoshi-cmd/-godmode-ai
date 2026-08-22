@@ -7,7 +7,7 @@ export type ProviderMessage = { role: "system" | "user" | "assistant"; content: 
 const MAX_HISTORY_TURNS = 12;
 const MAX_HISTORY_CHARACTERS = 24_000;
 const FAST_RESPONSE_POLICY = "Fast response profile is active. Give the direct answer first, keep the answer under 160 words unless the user explicitly asks for depth, avoid restating the request, and use concise bullets only when they improve clarity.";
-const FAST_POLICY_CHARACTER_LIMIT = 1_800;
+const FAST_POLICY_CHARACTER_LIMIT = 800;
 
 export function validateChatSelections(mode: ChatMode, selections: ChatSelection[]) {
   const unique = selections.filter((selection, index, list) => list.findIndex(candidate => candidate.providerId === selection.providerId && candidate.modelId === selection.modelId) === index);
@@ -18,8 +18,8 @@ export function validateChatSelections(mode: ChatMode, selections: ChatSelection
 
 export function compileExecutionPolicy(systemPrompt: string | null, fast = true) {
   if (!systemPrompt || !fast || systemPrompt.length <= FAST_POLICY_CHARACTER_LIMIT) return systemPrompt;
-  const opening = systemPrompt.slice(0, 1_300);
-  const closing = systemPrompt.slice(-300);
+  const opening = systemPrompt.slice(0, 480);
+  const closing = systemPrompt.slice(-120);
   return `${opening}\n\n[Fast execution policy: the full saved prompt is retained, but this request uses the opening and closing instructions to minimize provider latency.]\n\n${closing}`;
 }
 

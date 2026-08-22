@@ -70,6 +70,9 @@ export default function GodmodeChatWorkspace() {
   const [researchMode, setResearchMode] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [streamFirstTokenMs, setStreamFirstTokenMs] = useState<number | null>(null);
+  const [streamStatus, setStreamStatus] = useState("Opening fastest available free model…");
+  const [streamModelId, setStreamModelId] = useState("OpenRouter fast route");
   const [composer, setComposer] = useState("");
   const [mode, setMode] = useState<"solo" | "competition">("solo");
   const [selectedModels, setSelectedModels] = useState<SelectedModel[]>([]);
@@ -183,11 +186,11 @@ export default function GodmodeChatWorkspace() {
     setComposer("");
     try {
       if (mode === "solo" && !researchMode && selectedModels[0]?.providerId === "openrouter") {
-        setIsStreaming(true); setStreamingContent("");
+        setIsStreaming(true); setStreamingContent(""); setStreamFirstTokenMs(null); setStreamStatus("Opening fastest available free model…"); setStreamModelId("OpenRouter fast route");
         const response = await fetch("/api/godmode/stream", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ conversationId, content, selection: selectedModels[0] }) });
         if (!response.ok || !response.body) throw new Error("The streaming route could not be opened. Retry once.");
         const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
-        while (true) { const { value, done } = await reader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); let divider = buffer.indexOf("\n\n"); while (divider !== -1) { const event = buffer.slice(0, divider); buffer = buffer.slice(divider + 2); divider = buffer.indexOf("\n\n"); const type = event.match(/^event:\s*(.+)$/m)?.[1]; const payload = event.match(/^data:\s*(.+)$/m)?.[1]; if (!payload) continue; const parsed = JSON.parse(payload) as { chunk?: string; message?: string }; if (type === "delta" && parsed.chunk) setStreamingContent(current => current + parsed.chunk); if (type === "error") throw new Error(parsed.message || "The streaming request failed."); } }
+        while (true) { const { value, done } = await reader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); let divider = buffer.indexOf("\n\n"); while (divider !== -1) { const event = buffer.slice(0, divider); buffer = buffer.slice(divider + 2); divider = buffer.indexOf("\n\n"); const type = event.match(/^event:\s*(.+)$/m)?.[1]; const payload = event.match(/^data:\s*(.+)$/m)?.[1]; if (!payload) continue; const parsed = JSON.parse(payload) as { chunk?: string; message?: string; firstTokenMs?: number; latencyMs?: number; modelId?: string; attempt?: number; candidateCount?: number }; if (type === "meta") { if (parsed.modelId) setStreamModelId(parsed.modelId); setStreamStatus(`Testing free model ${parsed.attempt ?? 1}/${parsed.candidateCount ?? 1}…`); } if (type === "status" && parsed.message) setStreamStatus(parsed.message); if (type === "first-token" && parsed.firstTokenMs !== undefined) { setStreamFirstTokenMs(parsed.firstTokenMs); setStreamStatus("Receiving live response…"); } if (type === "delta" && parsed.chunk) setStreamingContent(current => current + parsed.chunk); if (type === "done" && parsed.firstTokenMs !== null && parsed.firstTokenMs !== undefined) toast.success(`First text in ${(parsed.firstTokenMs / 1000).toFixed(1)}s · completed in ${((parsed.latencyMs ?? 0) / 1000).toFixed(1)}s`); if (type === "error") throw new Error(parsed.message || "The streaming request failed."); } }
         setStreamingContent("");
         await Promise.all([utils.godmode.chat.list.invalidate(), utils.godmode.chat.detail.invalidate({ conversationId })]);
       } else {
@@ -202,7 +205,7 @@ export default function GodmodeChatWorkspace() {
         toast.error("Your old model is retired. Select a current free model to continue.");
         setSettingsOpen(true);
       } else toast.error(message);
-    } finally { setIsStreaming(false); setStreamingContent(""); }
+    } finally { setIsStreaming(false); setStreamingContent(""); setStreamFirstTokenMs(null); setStreamStatus("Opening fastest available free model…"); }
   }
 
   async function connect(event: FormEvent) {
@@ -238,7 +241,7 @@ export default function GodmodeChatWorkspace() {
       <header className="chat-topbar"><div className="top-left"><button className="history-trigger" onClick={() => setMobileHistory(true)}><Menu size={18} /></button><div><p>GODMODE / PRIVATE THREAD</p><h1>{conversation?.title || "New conversation"}</h1></div></div><div className="top-actions"><span className="connection-dot" />{diagnostics.filter(item => item.healthy).length} provider{diagnostics.filter(item => item.healthy).length === 1 ? "" : "s"} online<button onClick={() => setSettingsOpen(true)}><Settings2 size={17} />Configuration</button></div></header>
       <div className="chat-scroll"><div className="chat-thread">
         {!activeConversationId ? <WelcomeCard onNew={openConversation} onConnect={() => setSettingsOpen(true)} /> : detailQuery.isLoading ? <div className="thread-loading"><Loader2 className="spin" />Opening encrypted conversation…</div> : messages.length ? messages.map(message => { const retryable = message.providerId !== "openrouter" || Boolean(message.modelId && callableModelKeys.has(`openrouter:${message.modelId}`)); return <ChatBubble key={message.id} message={message} canRetry={retryable} onChooseFree={() => { toast.message("Your old model is retired. Select a current free model to resend this prompt."); setSettingsOpen(true); }} onRetry={async () => { try { await retryChat.mutateAsync({ messageId: message.id }); await utils.godmode.chat.detail.invalidate({ conversationId: activeConversationId }); } catch (error) { const retryMessage = error instanceof Error ? error.message : "Retry failed."; if (retryMessage.includes("not currently configured") || retryMessage.includes("paid or retired")) { toast.error("Your old model is retired. Select a current free model to continue."); setSettingsOpen(true); } else toast.error(retryMessage); } }} retrying={retryChat.isPending} />; }) : <EmptyThread />}
-        {isStreaming && <article className="message-row assistant stream-preview"><ProviderGlyph providerId="openrouter" /><div className="message-copy"><div className="message-meta"><span>Free Models Router · streaming</span><b><Zap size={12} />LIVE</b></div><div className="markdown-response">{streamingContent || "Opening fast response…"}</div></div></article>}
+        {isStreaming && <article className="message-row assistant stream-preview"><ProviderGlyph providerId="openrouter" /><div className="message-copy"><div className="message-meta"><span>{streamModelId} · streaming</span><b><Zap size={12} />{streamFirstTokenMs === null ? "CONNECTING" : `FIRST TEXT ${(streamFirstTokenMs / 1000).toFixed(1)}s`}</b></div><div className="stream-status">{streamStatus}</div><div className="markdown-response">{streamingContent || "Waiting for the provider’s first text…"}</div></div></article>}
         {busy && !isStreaming && <div className="assistant-thinking"><ProviderGlyph providerId={selectedModels[0]?.providerId || "platform"} /><span>{researchMode ? "Searching and reading live web sources…" : "Generating a compact response…"}</span><i /><i /><i /></div>}
         <div ref={messageEnd} />
       </div></div>
