@@ -51,7 +51,14 @@ export async function retryChatMessage(input: { userId: number; messageId: strin
   if (!failedMessage || failedMessage.role !== "assistant" || failedMessage.status !== "failed" || !failedMessage.providerId || !failedMessage.modelId) throw new Error("Only a failed model response can be retried.");
   const conversation = await db.getConversationForUser(input.userId, failedMessage.conversationId);
   if (!conversation) throw new Error("Conversation not found.");
-  await requireCallableModel(input.userId, failedMessage.providerId as ProviderId, failedMessage.modelId);
+  try {
+    await requireCallableModel(input.userId, failedMessage.providerId as ProviderId, failedMessage.modelId);
+  } catch {
+    if (failedMessage.providerId === "openrouter") {
+      throw new Error("This historical response used a paid or retired OpenRouter model. Choose a current free model from Model Routing and resend the prompt instead of retrying this model.");
+    }
+    throw new Error("This historical response uses a model that is no longer callable. Choose a current model and resend the prompt.");
+  }
   const history = await db.listConversationMessages(input.userId, conversation.id);
   const failedIndex = history.findIndex(message => message.id === failedMessage.id);
   const providerMessages = buildProviderMessages(conversation.systemPrompt, history.slice(0, failedIndex));

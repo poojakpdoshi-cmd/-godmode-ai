@@ -65,4 +65,12 @@ describe("chat execution service", () => {
     expect(provider.invokeConfiguredModel).toHaveBeenCalledWith(expect.objectContaining({ userId: 7, providerId: "openrouter", modelId: "qwen/test" }));
     expect(db.appendConversationMessage).toHaveBeenLastCalledWith(expect.objectContaining({ role: "assistant", status: "completed", content: "Recovered answer", replyToMessageId: "user-message-1" }));
   });
+
+  it("blocks a historical paid OpenRouter retry and directs the operator to a current free model", async () => {
+    const failed = { id: "paid-response", conversationId: conversation.id, userId: 7, role: "assistant", status: "failed", providerId: "openrouter", modelId: "aion-labs/aion-2.0", replyToMessageId: "user-message-1" };
+    db.getConversationMessageForUser.mockResolvedValue(failed);
+    provider.requireCallableModel.mockRejectedValue(new Error("The selected model is not currently configured and callable."));
+    await expect(retryChatMessage({ userId: 7, messageId: failed.id })).rejects.toThrow("paid or retired OpenRouter model");
+    expect(provider.invokeConfiguredModel).not.toHaveBeenCalled();
+  });
 });

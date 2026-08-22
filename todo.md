@@ -29,3 +29,4 @@
 - [x] Convert raw provider error bodies into concise, actionable chat diagnostics without hiding the actual failure category.
 - [x] Filter the OpenRouter registry and chat routing to genuinely free models only, with paid models excluded from selection.
 - [x] Add clear free-only model labels and automated tests for pricing-based model exclusion.
+- [x] Block retries and sends that target legacy paid OpenRouter models, and direct the user to choose a current free model instead.

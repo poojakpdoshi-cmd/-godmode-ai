@@ -86,6 +86,7 @@ export default function GodmodeChatWorkspace() {
   const conversation = detailQuery.data?.conversation;
   const messages = detailQuery.data?.messages ?? [];
   const busy = sendChat.isPending || createChat.isPending || retryChat.isPending;
+  const callableModelKeys = useMemo(() => new Set(models.map(model => `${model.providerId}:${model.modelId}`)), [models]);
 
   useEffect(() => {
     if (!activeConversationId && conversationQuery.data?.[0]) setActiveConversationId(conversationQuery.data[0].id);
@@ -102,8 +103,12 @@ export default function GodmodeChatWorkspace() {
   }, [conversation?.id]);
 
   useEffect(() => {
-    if (!selectedModels.length && models.length) setSelectedModels([{ providerId: models[0].providerId, modelId: models[0].modelId }]);
-  }, [models, selectedModels.length]);
+    if (!models.length) { setSelectedModels([]); return; }
+    setSelectedModels(current => {
+      const currentModels = current.filter(item => callableModelKeys.has(`${item.providerId}:${item.modelId}`));
+      return currentModels.length ? currentModels : [{ providerId: models[0].providerId, modelId: models[0].modelId }];
+    });
+  }, [callableModelKeys, models]);
 
   useEffect(() => { messageEnd.current?.scrollIntoView({ block: "end", behavior: "smooth" }); }, [messages.length, busy]);
 
@@ -194,7 +199,7 @@ export default function GodmodeChatWorkspace() {
     <section className="chat-stage">
       <header className="chat-topbar"><div className="top-left"><button className="history-trigger" onClick={() => setMobileHistory(true)}><Menu size={18} /></button><div><p>GODMODE / PRIVATE THREAD</p><h1>{conversation?.title || "New conversation"}</h1></div></div><div className="top-actions"><span className="connection-dot" />{diagnostics.filter(item => item.healthy).length} provider{diagnostics.filter(item => item.healthy).length === 1 ? "" : "s"} online<button onClick={() => setSettingsOpen(true)}><Settings2 size={17} />Configuration</button></div></header>
       <div className="chat-scroll"><div className="chat-thread">
-        {!activeConversationId ? <WelcomeCard onNew={openConversation} onConnect={() => setSettingsOpen(true)} /> : detailQuery.isLoading ? <div className="thread-loading"><Loader2 className="spin" />Opening encrypted conversation…</div> : messages.length ? messages.map(message => <ChatBubble key={message.id} message={message} onRetry={async () => { try { await retryChat.mutateAsync({ messageId: message.id }); await utils.godmode.chat.detail.invalidate({ conversationId: activeConversationId }); } catch (error) { toast.error(error instanceof Error ? error.message : "Retry failed."); } }} retrying={retryChat.isPending} />) : <EmptyThread />}
+        {!activeConversationId ? <WelcomeCard onNew={openConversation} onConnect={() => setSettingsOpen(true)} /> : detailQuery.isLoading ? <div className="thread-loading"><Loader2 className="spin" />Opening encrypted conversation…</div> : messages.length ? messages.map(message => { const retryable = message.providerId !== "openrouter" || Boolean(message.modelId && callableModelKeys.has(`openrouter:${message.modelId}`)); return <ChatBubble key={message.id} message={message} canRetry={retryable} onChooseFree={() => setSettingsOpen(true)} onRetry={async () => { try { await retryChat.mutateAsync({ messageId: message.id }); await utils.godmode.chat.detail.invalidate({ conversationId: activeConversationId }); } catch (error) { toast.error(error instanceof Error ? error.message : "Retry failed."); } }} retrying={retryChat.isPending} />; }) : <EmptyThread />}
         {busy && <div className="assistant-thinking"><ProviderGlyph providerId={selectedModels[0]?.providerId || "platform"} /><span>Awaiting genuine provider outcome</span><i /><i /><i /></div>}
         <div ref={messageEnd} />
       </div></div>
@@ -211,8 +216,8 @@ function WelcomeCard({ onNew, onConnect }: { onNew: () => void; onConnect: () =>
 
 function EmptyThread() { return <div className="thread-empty"><Sparkles size={22} /><h2>Thread is ready.</h2><span>Set a system prompt or send the first message. Only real provider responses will appear here.</span></div>; }
 
-function ChatBubble({ message, onRetry, retrying }: { message: { id: string; role: string; content: string; providerId: string | null; modelId: string | null; status: string; errorMessage: string | null; latencyMs: number | null; totalTokens: number | null; createdAt: Date }; onRetry: () => void; retrying: boolean }) {
+function ChatBubble({ message, onRetry, onChooseFree, canRetry, retrying }: { message: { id: string; role: string; content: string; providerId: string | null; modelId: string | null; status: string; errorMessage: string | null; latencyMs: number | null; totalTokens: number | null; createdAt: Date }; onRetry: () => void; onChooseFree: () => void; canRetry: boolean; retrying: boolean }) {
   const isUser = message.role === "user";
   if (isUser) return <article className="message-row user"><div className="message-copy"><p>{message.content}</p></div><span className="user-mark">YOU</span></article>;
-  return <article className={`message-row assistant ${message.status === "failed" ? "failure" : ""}`}><ProviderGlyph providerId={(message.providerId || "platform") as ProviderId} /><div className="message-copy"><div className="message-meta"><span>{message.modelId || "Provider"}</span>{message.status === "failed" ? <b><TriangleAlert size={12} />FAILED</b> : <b><Check size={12} />COMPLETE</b>}</div>{message.status === "failed" ? <div className="failure-copy"><TriangleAlert size={15} /><span>{message.errorMessage || "The provider did not return a usable response."}</span></div> : <div className="markdown-response"><Suspense fallback={<span>Rendering result…</span>}><Streamdown>{message.content}</Streamdown></Suspense></div>}<footer><span><Clock3 size={12} />{duration(message.latencyMs)}</span><span><Cpu size={12} />{message.totalTokens?.toLocaleString() ?? "—"} tokens</span>{message.status === "failed" && <button onClick={onRetry} disabled={retrying}><RotateCcw size={12} />Retry exact model</button>}{message.status === "completed" && <button onClick={() => navigator.clipboard.writeText(message.content).then(() => toast.success("Response copied."))}><Copy size={12} />Copy</button>}</footer></div></article>;
+  return <article className={`message-row assistant ${message.status === "failed" ? "failure" : ""}`}><ProviderGlyph providerId={(message.providerId || "platform") as ProviderId} /><div className="message-copy"><div className="message-meta"><span>{message.modelId || "Provider"}</span>{message.status === "failed" ? <b><TriangleAlert size={12} />FAILED</b> : <b><Check size={12} />COMPLETE</b>}</div>{message.status === "failed" ? <div className="failure-copy"><TriangleAlert size={15} /><span>{message.errorMessage || "The provider did not return a usable response."}</span></div> : <div className="markdown-response"><Suspense fallback={<span>Rendering result…</span>}><Streamdown>{message.content}</Streamdown></Suspense></div>}<footer><span><Clock3 size={12} />{duration(message.latencyMs)}</span><span><Cpu size={12} />{message.totalTokens?.toLocaleString() ?? "—"} tokens</span>{message.status === "failed" && (canRetry ? <button onClick={onRetry} disabled={retrying}><RotateCcw size={12} />Retry exact model</button> : <button onClick={onChooseFree}><Settings2 size={12} />Choose a free model</button>)}{message.status === "completed" && <button onClick={() => navigator.clipboard.writeText(message.content).then(() => toast.success("Response copied."))}><Copy size={12} />Copy</button>}</footer></div></article>;
 }
