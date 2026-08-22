@@ -286,6 +286,7 @@ export async function appendConversationMessage(input: {
   modelId?: string;
   status?: "completed" | "failed";
   errorMessage?: string;
+  firstTokenMs?: number;
   latencyMs?: number;
   promptTokens?: number;
   completionTokens?: number;
@@ -304,6 +305,7 @@ export async function appendConversationMessage(input: {
     modelId: input.modelId ?? null,
     status: input.status ?? "completed" as const,
     errorMessage: input.errorMessage ?? null,
+    firstTokenMs: input.firstTokenMs ?? null,
     latencyMs: input.latencyMs ?? null,
     promptTokens: input.promptTokens ?? null,
     completionTokens: input.completionTokens ?? null,

@@ -14,7 +14,7 @@ const provider = vi.hoisted(() => ({ assertOpenRouterFreeAccess: vi.fn(), requir
 vi.mock("./db", () => db);
 vi.mock("./providerRegistry", () => provider);
 
-import { buildProviderMessages, compileExecutionPolicy, prepareStreamedChat, retryChatMessage, sendChatMessage } from "./chatService";
+import { buildProviderMessages, compileExecutionPolicy, persistStreamedAssistantMessage, prepareStreamedChat, retryChatMessage, sendChatMessage } from "./chatService";
 
 const conversation = { id: "conversation-1", userId: 7, title: "New conversation", systemPrompt: "Be concise and write TypeScript.", mode: "solo" as const, selectedModels: "[]" };
 
@@ -70,6 +70,11 @@ describe("chat execution service", () => {
     expect(plan.selection).toEqual({ providerId: "openrouter", modelId: "openrouter/free" });
     expect(db.updateConversationConfiguration).toHaveBeenCalledWith(expect.objectContaining({ userId: 7, conversationId: conversation.id, selectedModels: JSON.stringify([{ providerId: "openrouter", modelId: "cohere/north-mini-code:free" }]) }));
     expect(provider.requireCallableModel).toHaveBeenCalledWith(7, "openrouter", "openrouter/free");
+  });
+
+  it("persists first-token time separately from total streamed completion time", async () => {
+    await persistStreamedAssistantMessage({ userId: 7, conversationId: conversation.id, userMessageId: "user-message-1", selection: { providerId: "openrouter", modelId: "qwen/test" }, output: "Streamed answer", firstTokenMs: 640, latencyMs: 1_840, usage: { totalTokens: 14 } });
+    expect(db.appendConversationMessage).toHaveBeenCalledWith(expect.objectContaining({ firstTokenMs: 640, latencyMs: 1_840, totalTokens: 14 }));
   });
 
   it("persists the genuine model response with provider metadata", async () => {

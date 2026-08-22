@@ -82,7 +82,7 @@ async function startServer() {
       if (!result) throw lastError ?? new Error("All available free models were congested.");
       const latencyMs = Date.now() - startedAt;
       const finalSelection = { providerId: "openrouter" as const, modelId: activeModelId };
-      await persistStreamedAssistantMessage({ userId: user.id, conversationId: plan.conversationId, userMessageId: plan.userMessageId, selection: finalSelection, output: result.output, latencyMs, usage: result.usage });
+      await persistStreamedAssistantMessage({ userId: user.id, conversationId: plan.conversationId, userMessageId: plan.userMessageId, selection: finalSelection, output: result.output, firstTokenMs, latencyMs, usage: result.usage });
       write("done", { latencyMs, firstTokenMs, modelId: activeModelId, usage: result.usage });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Streaming request failed.";

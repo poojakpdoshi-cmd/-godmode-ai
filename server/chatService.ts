@@ -84,8 +84,8 @@ export async function prepareStreamedChat(input: { userId: number; conversationI
   return { conversationId: conversation.id, userMessageId: userMessage.id, selection, messages: buildProviderMessages(conversation.systemPrompt, history, true) };
 }
 
-export async function persistStreamedAssistantMessage(input: { userId: number; conversationId: string; userMessageId: string; selection: ChatSelection; output: string; latencyMs: number; usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number } }) {
-  await db.appendConversationMessage({ userId: input.userId, conversationId: input.conversationId, replyToMessageId: input.userMessageId, role: "assistant", content: input.output || "The provider returned an empty response.", providerId: input.selection.providerId, modelId: input.selection.modelId, status: "completed", latencyMs: input.latencyMs, ...input.usage });
+export async function persistStreamedAssistantMessage(input: { userId: number; conversationId: string; userMessageId: string; selection: ChatSelection; output: string; firstTokenMs: number | null; latencyMs: number; usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number } }) {
+  await db.appendConversationMessage({ userId: input.userId, conversationId: input.conversationId, replyToMessageId: input.userMessageId, role: "assistant", content: input.output || "The provider returned an empty response.", providerId: input.selection.providerId, modelId: input.selection.modelId, status: "completed", firstTokenMs: input.firstTokenMs ?? undefined, latencyMs: input.latencyMs, ...input.usage });
 }
 
 export async function persistStreamedFailure(input: { userId: number; conversationId: string; userMessageId: string; selection: ChatSelection; errorMessage: string; latencyMs: number }) {

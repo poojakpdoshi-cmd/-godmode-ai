@@ -165,6 +165,7 @@ export const conversationMessages = mysqlTable(
     modelId: varchar("modelId", { length: 255 }),
     status: mysqlEnum("status", ["completed", "failed"]).default("completed").notNull(),
     errorMessage: text("errorMessage"),
+    firstTokenMs: int("firstTokenMs"),
     latencyMs: int("latencyMs"),
     promptTokens: int("promptTokens"),
     completionTokens: int("completionTokens"),
