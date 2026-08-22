@@ -39,6 +39,8 @@ const Streamdown = lazy(async () => {
 
 type ProviderId = "platform" | "openrouter" | "respan";
 type SelectedModel = { providerId: ProviderId; modelId: string };
+type ChatModel = { key: string; providerId: ProviderId; modelId: string; displayName: string; providerName: string; contextLength?: number | null };
+const EMPTY_MODELS: ChatModel[] = [];
 
 function duration(value?: number | null) {
   if (value === null || value === undefined) return "—";
@@ -84,7 +86,7 @@ export default function GodmodeChatWorkspace() {
   const detachProvider = trpc.godmode.providers.disconnect.useMutation();
   const refreshProviders = trpc.godmode.providers.refresh.useMutation();
 
-  const models = providerQuery.data?.models ?? [];
+  const models = providerQuery.data?.models ?? EMPTY_MODELS;
   const diagnostics = providerQuery.data?.diagnostics ?? [];
   const conversation = detailQuery.data?.conversation;
   const messages = detailQuery.data?.messages ?? [];
@@ -92,6 +94,8 @@ export default function GodmodeChatWorkspace() {
   const callableModelKeys = useMemo(() => new Set(models.map(model => `${model.providerId}:${model.modelId}`)), [models]);
   const hasInvalidSelection = Boolean(selectedModels.length) && selectedModels.some(item => !callableModelKeys.has(`${item.providerId}:${item.modelId}`));
   const hasUnsavedPrompt = systemPrompt.trim() !== savedSystemPrompt;
+  const promptCharacterLimit = 60_000;
+  const promptNearLimit = systemPrompt.length > 48_000;
 
   useEffect(() => {
     if (!activeConversationId && conversationQuery.data?.[0]) setActiveConversationId(conversationQuery.data[0].id);
@@ -109,10 +113,12 @@ export default function GodmodeChatWorkspace() {
   }, [conversation?.id]);
 
   useEffect(() => {
-    if (!models.length) { setSelectedModels([]); return; }
+    const sameSelections = (left: SelectedModel[], right: SelectedModel[]) => left.length === right.length && left.every((item, index) => item.providerId === right[index]?.providerId && item.modelId === right[index]?.modelId);
     setSelectedModels(current => {
+      if (!models.length) return current.length ? [] : current;
       const currentModels = current.filter(item => callableModelKeys.has(`${item.providerId}:${item.modelId}`));
-      return currentModels.length ? currentModels : [{ providerId: models[0].providerId, modelId: models[0].modelId }];
+      const next = currentModels.length ? currentModels : [{ providerId: models[0].providerId, modelId: models[0].modelId }];
+      return sameSelections(current, next) ? current : next;
     });
   }, [callableModelKeys, models]);
 
@@ -151,13 +157,18 @@ export default function GodmodeChatWorkspace() {
       setSavedSystemPrompt(normalizedPrompt);
       await utils.godmode.chat.detail.invalidate({ conversationId: activeConversationId });
       toast.success(normalizedPrompt ? "System prompt saved and active for orchestration." : "System prompt cleared for this conversation.");
-    } catch (error) { toast.error(error instanceof Error ? error.message : "Unable to save the system prompt."); }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to save the system prompt.";
+      if (message.includes("Too big") || message.includes("60000")) toast.error("System prompt is over the supported 60,000-character limit. Shorten it, then save again.");
+      else toast.error(message);
+    }
   }
 
   async function submitMessage(event?: FormEvent) {
     event?.preventDefault();
     const content = composer.trim();
     if (!content || busy) return;
+    if (hasUnsavedPrompt) { toast.message("Save your system prompt first so the orchestrator uses the exact policy you wrote."); setSettingsOpen(true); return; }
     if (!models.length) { toast.error("Connect OpenRouter to load the currently available free models."); setSettingsOpen(true); return; }
     if (hasInvalidSelection) { toast.error("Your old model is retired. Select a current free model to continue."); setSettingsOpen(true); return; }
     if (mode === "solo" && selectedModels.length !== 1) { toast.error("Choose one callable model."); return; }
@@ -166,7 +177,6 @@ export default function GodmodeChatWorkspace() {
     if (!conversationId) return;
     setComposer("");
     try {
-      if (conversationId === activeConversationId) await configureChat.mutateAsync({ conversationId, systemPrompt: systemPrompt.trim() || null, mode, selections: selectedModels });
       const detail = await sendChat.mutateAsync({ conversationId, content, mode, selections: selectedModels });
       setActiveConversationId(detail?.conversation.id);
       await Promise.all([utils.godmode.chat.list.invalidate(), utils.godmode.chat.detail.invalidate({ conversationId })]);
@@ -218,7 +228,7 @@ export default function GodmodeChatWorkspace() {
       </div></div>
       <form className="composer-wrap" onSubmit={submitMessage}><div className="selection-pill"><button type="button" onClick={() => setSettingsOpen(true)}><Cpu size={14} />{selectedModels.length ? hasInvalidSelection ? "Choose a free model" : `${selectedModels.length} ${mode === "competition" ? "models competing" : "model selected"}` : "Select model"}<ChevronDown size={13} /></button><span>{mode === "competition" ? <><Split size={12} />COMPARE</> : <><Bot size={12} />DIRECT</>}</span></div>{hasInvalidSelection && <p className="legacy-model-warning"><TriangleAlert size={12} />Old paid model removed. Choose a current free model before sending.</p>}<textarea value={composer} onChange={event => setComposer(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void submitMessage(); } }} placeholder={models.length ? hasInvalidSelection ? "Choose a free model in Model Routing…" : "Message GODMODE…" : "Connect OpenRouter or Respan to begin…"} rows={1} disabled={busy} /><div className="composer-footer"><span><Terminal size={12} />Enter to send · Shift+Enter for new line</span><button className="send-command" disabled={!composer.trim() || busy || hasInvalidSelection} type="submit">{busy ? <Loader2 className="spin" size={16} /> : <SendHorizontal size={16} />}<span>Send</span></button></div></form>
     </section>
-    <aside className={`settings-dock ${settingsOpen ? "visible" : ""}`}><button className="settings-close" onClick={() => setSettingsOpen(false)}><X size={18} /></button><div className="settings-head"><p>WORKSPACE CONTROLS</p><h2>Route the conversation.</h2><span>Every selection below is verified live before it can receive a message.</span></div><section className="settings-block"><div className="block-label"><KeyRound size={14} />PROVIDER CONNECTIONS</div>{diagnostics.filter(item => item.providerId !== "platform").map(item => <div className="provider-row" key={item.providerId}><ProviderGlyph providerId={item.providerId} /><div><strong>{item.providerName}</strong><small>{item.healthy ? `${item.modelCount} callable models` : item.configured ? item.error || "Connection needs attention" : "Optional connection"}</small></div>{item.healthy ? <button className="quiet-action danger" onClick={() => void disconnect(item.providerId as "openrouter" | "respan")}>Disconnect</button> : <button className="quiet-action" onClick={() => setConnectProvider(item.providerId as "openrouter" | "respan")}>Connect</button>}</div>)}<button className="refresh-action" onClick={() => refreshProviders.mutate(undefined, { onSuccess: () => utils.godmode.providers.list.invalidate(), onError: () => toast.error("Provider refresh failed.") })} disabled={refreshProviders.isPending}><RefreshCw className={refreshProviders.isPending ? "spin" : ""} size={14} />Refresh live registry</button></section><section className="settings-block"><div className="block-label"><Sparkles size={14} />SYSTEM PROMPT</div><textarea className="system-prompt" value={systemPrompt} onChange={event => setSystemPrompt(event.target.value)} placeholder="Define the behavior, tone, constraints, and context for this conversation…" rows={5} /><div className="prompt-save-row"><span className={hasUnsavedPrompt ? "prompt-state unsaved" : "prompt-state saved"}>{hasUnsavedPrompt ? "UNSAVED CHANGES" : activeConversationId ? "SAVED · ACTIVE" : "START A THREAD TO SAVE"}</span><button className="save-prompt" type="button" onClick={() => void persistConfiguration()} disabled={!activeConversationId || !hasUnsavedPrompt || configureChat.isPending}>{configureChat.isPending ? <Loader2 className="spin" size={12} /> : <Check size={12} />}{configureChat.isPending ? "Saving…" : "Save system prompt"}</button></div><p className="subtle-note">This is the orchestration policy: it is inserted before history on every direct request and every model in Compare mode.</p></section><section className="settings-block"><div className="block-label"><Gauge size={14} />MODEL ROUTING <span className="free-only-badge">OPENROUTER FREE ONLY</span></div><div className="mode-toggle"><button className={mode === "solo" ? "active" : ""} onClick={() => { setMode("solo"); setSelectedModels(current => current.slice(0, 1)); }}><Bot size={13} />Direct</button><button className={mode === "competition" ? "active" : ""} onClick={() => setMode("competition")}><Split size={13} />Compare</button></div><p className="subtle-note free-policy">Paid OpenRouter models are excluded. The free router may choose a currently available free model automatically.</p><div className="model-picker">{models.length ? models.map(model => { const selected = selectedModels.some(item => item.providerId === model.providerId && item.modelId === model.modelId); return <button key={model.key} className={selected ? "model-option selected" : "model-option"} onClick={() => toggleModel({ providerId: model.providerId, modelId: model.modelId })}><span className="selection-check">{selected && <Check size={12} />}</span><ProviderGlyph providerId={model.providerId} /><span><strong>{model.displayName}</strong><small>{model.providerName}{model.contextLength ? ` · ${Intl.NumberFormat().format(model.contextLength)} ctx` : ""}</small></span></button>; }) : <div className="no-model-card"><TriangleAlert size={16} /><span>No callable free model. Connect OpenRouter or Respan and verify the key.</span></div>}</div></section></aside>
+    <aside className={`settings-dock ${settingsOpen ? "visible" : ""}`}><button className="settings-close" onClick={() => setSettingsOpen(false)}><X size={18} /></button><div className="settings-head"><p>WORKSPACE CONTROLS</p><h2>Route the conversation.</h2><span>Every selection below is verified live before it can receive a message.</span></div><section className="settings-block"><div className="block-label"><KeyRound size={14} />PROVIDER CONNECTIONS</div>{diagnostics.filter(item => item.providerId !== "platform").map(item => <div className="provider-row" key={item.providerId}><ProviderGlyph providerId={item.providerId} /><div><strong>{item.providerName}</strong><small>{item.healthy ? `${item.modelCount} callable models` : item.configured ? item.error || "Connection needs attention" : "Optional connection"}</small></div>{item.healthy ? <button className="quiet-action danger" onClick={() => void disconnect(item.providerId as "openrouter" | "respan")}>Disconnect</button> : <button className="quiet-action" onClick={() => setConnectProvider(item.providerId as "openrouter" | "respan")}>Connect</button>}</div>)}<button className="refresh-action" onClick={() => refreshProviders.mutate(undefined, { onSuccess: () => utils.godmode.providers.list.invalidate(), onError: () => toast.error("Provider refresh failed.") })} disabled={refreshProviders.isPending}><RefreshCw className={refreshProviders.isPending ? "spin" : ""} size={14} />Refresh live registry</button></section><section className="settings-block"><div className="block-label"><Sparkles size={14} />SYSTEM PROMPT</div><textarea className="system-prompt" value={systemPrompt} onChange={event => setSystemPrompt(event.target.value)} placeholder="Define the behavior, tone, constraints, and context for this conversation…" rows={5} maxLength={promptCharacterLimit} /><div className="prompt-save-row"><span className={hasUnsavedPrompt ? "prompt-state unsaved" : "prompt-state saved"}>{hasUnsavedPrompt ? "UNSAVED CHANGES" : activeConversationId ? "SAVED · ACTIVE" : "START A THREAD TO SAVE"}</span><button className="save-prompt" type="button" onClick={() => void persistConfiguration()} disabled={!activeConversationId || !hasUnsavedPrompt || configureChat.isPending}>{configureChat.isPending ? <Loader2 className="spin" size={12} /> : <Check size={12} />}{configureChat.isPending ? "Saving…" : "Save system prompt"}</button></div><div className={promptNearLimit ? "prompt-length near-limit" : "prompt-length"}>{systemPrompt.length.toLocaleString()} / {promptCharacterLimit.toLocaleString()} characters</div><p className="subtle-note">This is the orchestration policy: save it before sending, then it is inserted before history on every direct request and every model in Compare mode.</p></section><section className="settings-block"><div className="block-label"><Gauge size={14} />MODEL ROUTING <span className="free-only-badge">OPENROUTER FREE ONLY</span></div><div className="mode-toggle"><button className={mode === "solo" ? "active" : ""} onClick={() => { setMode("solo"); setSelectedModels(current => current.slice(0, 1)); }}><Bot size={13} />Direct</button><button className={mode === "competition" ? "active" : ""} onClick={() => setMode("competition")}><Split size={13} />Compare</button></div><p className="subtle-note free-policy">Paid OpenRouter models are excluded. The free router may choose a currently available free model automatically.</p><div className="model-picker">{models.length ? models.map(model => { const selected = selectedModels.some(item => item.providerId === model.providerId && item.modelId === model.modelId); return <button key={model.key} className={selected ? "model-option selected" : "model-option"} onClick={() => toggleModel({ providerId: model.providerId, modelId: model.modelId })}><span className="selection-check">{selected && <Check size={12} />}</span><ProviderGlyph providerId={model.providerId} /><span><strong>{model.displayName}</strong><small>{model.providerName}{model.contextLength ? ` · ${Intl.NumberFormat().format(model.contextLength)} ctx` : ""}</small></span></button>; }) : <div className="no-model-card"><TriangleAlert size={16} /><span>No callable free model. Connect OpenRouter or Respan and verify the key.</span></div>}</div></section></aside>
     {connectProvider && <div className="connect-overlay"><form className="connect-card" onSubmit={connect}><button type="button" className="connect-close" onClick={() => { setConnectProvider(undefined); setApiKey(""); }}><X size={18} /></button><ProviderGlyph providerId={connectProvider} /><p>{connectProvider === "openrouter" ? "OPENROUTER" : "RESPAN"} CONNECTION</p><h2>Connect an API key.</h2><span>The key is sent only to the server, verified with a live model request, and encrypted before persistence. It never returns to this browser.</span><label>API KEY<input autoFocus type="password" value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder={connectProvider === "openrouter" ? "sk-or-v1-…" : "Paste Respan API key"} /></label><button className="signal-primary" disabled={!apiKey.trim() || attachProvider.isPending}>{attachProvider.isPending ? <Loader2 className="spin" size={16} /> : <KeyRound size={16} />}Verify and connect</button></form></div>}
   </main>;
 }

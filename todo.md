@@ -33,3 +33,6 @@
 - [x] Prevent invalid legacy selections before request submission and replace generic model errors with a clear free-model recovery action.
 - [x] Add a visible Save system prompt action with saved, unsaved, and error feedback.
 - [x] Enforce the saved system prompt across every direct and comparison orchestration request, with tests proving prompt propagation.
+- [x] Investigate the preview browser error counter, resolve application-side causes, and verify the cleaned diagnostic state.
+- [x] Confirm no new browser-console errors occur after the restart and state-loop fix using fresh diagnostic evidence.
+- [x] Prevent oversized system prompts from producing raw validation errors by adding an explicit supported limit, character feedback, and friendly recovery guidance.

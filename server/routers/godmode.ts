@@ -60,8 +60,8 @@ export const godmodeRouter = router({
   chat: router({
     list: protectedProcedure.query(({ ctx }) => db.listConversations(ctx.user.id)),
     detail: protectedProcedure.input(z.object({ conversationId: z.string().min(1).max(36) })).query(async ({ ctx, input }) => requireValue(await db.getConversationDetail(ctx.user.id, input.conversationId))),
-    create: protectedProcedure.input(z.object({ title: z.string().trim().min(1).max(180).optional(), systemPrompt: z.string().trim().max(16_000).optional() })).mutation(({ ctx, input }) => db.createConversation({ userId: ctx.user.id, ...input })),
-    configure: protectedProcedure.input(z.object({ conversationId: z.string().min(1).max(36), systemPrompt: z.string().trim().max(16_000).nullable().optional(), mode: z.enum(["solo", "competition"]).optional(), selections: z.array(selectedModelSchema).min(1).max(6).optional() })).mutation(async ({ ctx, input }) => {
+    create: protectedProcedure.input(z.object({ title: z.string().trim().min(1).max(180).optional(), systemPrompt: z.string().trim().max(60_000).optional() })).mutation(({ ctx, input }) => db.createConversation({ userId: ctx.user.id, ...input })),
+    configure: protectedProcedure.input(z.object({ conversationId: z.string().min(1).max(36), systemPrompt: z.string().trim().max(60_000).nullable().optional(), mode: z.enum(["solo", "competition"]).optional(), selections: z.array(selectedModelSchema).min(1).max(6).optional() })).mutation(async ({ ctx, input }) => {
       requireValue(await db.getConversationForUser(ctx.user.id, input.conversationId));
       if (input.selections && input.mode) {
         try { validateChatSelections(input.mode, input.selections as Array<{ providerId: ProviderId; modelId: string }>); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Invalid chat selection." }); }

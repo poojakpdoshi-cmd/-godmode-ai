@@ -24,3 +24,12 @@
   gap: 5px;
   font: 700 8px "IBM Plex Mono", monospace;
 }
+
+.prompt-length {
+  color: #638190;
+  text-align: right;
+  margin-top: 5px;
+  font: 700 8px "IBM Plex Mono", monospace;
+}
+
+.prompt-length.near-limit { color: #f6cf7c; }
