@@ -1,0 +1,26 @@
+.prompt-save-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.prompt-state {
+  font: 700 8px "IBM Plex Mono", monospace;
+  letter-spacing: .07em;
+}
+
+.prompt-state.saved { color: #76e8c0; }
+.prompt-state.unsaved { color: #f6cf7c; }
+
+.save-prompt {
+  border: 1px solid rgba(119, 230, 195, .45);
+  background: rgba(74, 204, 167, .1);
+  color: #b4f9de;
+  padding: 6px 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: 700 8px "IBM Plex Mono", monospace;
+}

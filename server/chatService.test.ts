@@ -50,6 +50,14 @@ describe("chat execution service", () => {
     expect(db.appendConversationMessage).toHaveBeenLastCalledWith(expect.objectContaining({ role: "assistant", status: "completed", providerId: "openrouter", modelId: "qwen/test", totalTokens: 22 }));
   });
 
+  it("applies the saved orchestration policy to every model in a comparison request", async () => {
+    provider.invokeConfiguredModel.mockResolvedValue({ output: "Compared response", usage: { totalTokens: 12 } });
+    await sendChatMessage({ userId: 7, conversationId: conversation.id, content: "Compare approaches", mode: "competition", selections: [{ providerId: "openrouter", modelId: "free-a" }, { providerId: "respan", modelId: "free-b" }] });
+    expect(provider.invokeConfiguredModel).toHaveBeenCalledTimes(2);
+    expect(provider.invokeConfiguredModel).toHaveBeenNthCalledWith(1, expect.objectContaining({ messages: expect.arrayContaining([{ role: "system", content: "Be concise and write TypeScript." }]) }));
+    expect(provider.invokeConfiguredModel).toHaveBeenNthCalledWith(2, expect.objectContaining({ messages: expect.arrayContaining([{ role: "system", content: "Be concise and write TypeScript." }]) }));
+  });
+
   it("persists provider failures as retryable assistant records instead of inventing an answer", async () => {
     provider.invokeConfiguredModel.mockRejectedValue(new Error("Provider rejected request"));
     await sendChatMessage({ userId: 7, conversationId: conversation.id, content: "Write a function", mode: "solo", selections: [{ providerId: "openrouter", modelId: "qwen/test" }] });

@@ -31,3 +31,5 @@
 - [x] Add clear free-only model labels and automated tests for pricing-based model exclusion.
 - [x] Block retries and sends that target legacy paid OpenRouter models, and direct the user to choose a current free model instead.
 - [x] Prevent invalid legacy selections before request submission and replace generic model errors with a clear free-model recovery action.
+- [x] Add a visible Save system prompt action with saved, unsaved, and error feedback.
+- [x] Enforce the saved system prompt across every direct and comparison orchestration request, with tests proving prompt propagation.
