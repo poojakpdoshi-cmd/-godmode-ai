@@ -9,7 +9,7 @@ const db = vi.hoisted(() => ({
   getConversationDetail: vi.fn(),
   getConversationMessageForUser: vi.fn(),
 }));
-const provider = vi.hoisted(() => ({ requireCallableModel: vi.fn(), invokeConfiguredModel: vi.fn() }));
+const provider = vi.hoisted(() => ({ assertOpenRouterFreeAccess: vi.fn(), requireCallableModel: vi.fn(), invokeConfiguredModel: vi.fn() }));
 
 vi.mock("./db", () => db);
 vi.mock("./providerRegistry", () => provider);
@@ -25,6 +25,7 @@ describe("chat execution service", () => {
     db.appendConversationMessage.mockResolvedValueOnce({ id: "user-message-1" });
     db.listConversationMessages.mockResolvedValue([{ id: "user-message-1", role: "user", content: "Write a function", status: "completed" }]);
     db.getConversationDetail.mockResolvedValue({ conversation, messages: [] });
+    provider.assertOpenRouterFreeAccess.mockResolvedValue({});
     provider.requireCallableModel.mockResolvedValue({});
   });
 
@@ -94,6 +95,13 @@ describe("chat execution service", () => {
     provider.invokeConfiguredModel.mockRejectedValue(new Error("Provider rejected request"));
     await sendChatMessage({ userId: 7, conversationId: conversation.id, content: "Write a function", mode: "solo", selections: [{ providerId: "openrouter", modelId: "qwen/test" }] });
     expect(db.appendConversationMessage).toHaveBeenLastCalledWith(expect.objectContaining({ role: "assistant", status: "failed", content: "", errorMessage: "Provider rejected request" }));
+  });
+
+  it("stops an account-gated OpenRouter request before a user message or retry loop is created", async () => {
+    provider.assertOpenRouterFreeAccess.mockRejectedValue(new Error("OpenRouter could not run this model because the connected account has insufficient API credits."));
+    await expect(sendChatMessage({ userId: 7, conversationId: conversation.id, content: "Write a function", mode: "solo", selections: [{ providerId: "openrouter", modelId: "qwen/test" }] })).rejects.toThrow("insufficient API credits");
+    expect(db.appendConversationMessage).not.toHaveBeenCalled();
+    expect(provider.invokeConfiguredModel).not.toHaveBeenCalled();
   });
 
   it("retries the failed model against its stored user-scoped thread", async () => {

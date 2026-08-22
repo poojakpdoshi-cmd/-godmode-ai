@@ -55,3 +55,8 @@
 .composer-research { display: inline-flex; align-items: center; gap: 4px; border: 1px solid rgba(137, 193, 224, .3); background: rgba(8, 20, 30, .62); color: #9ec0d0; padding: 4px 6px; font: 700 8px "IBM Plex Mono", monospace; }
 .composer-research.active { border-color: rgba(114, 235, 196, .65); background: rgba(74, 214, 175, .15); color: #aef6d9; }
 .stream-preview .markdown-response { min-height: 24px; }
+
+.managed-route { display: flex; align-items: flex-start; gap: 9px; color: #b8d7e4; }
+.managed-route .provider-glyph { margin: 0; }
+.managed-route strong { display: block; font-size: 10px; }
+.managed-route small { display: block; color: #718e9c; font-size: 9px; line-height: 1.45; margin-top: 3px; }

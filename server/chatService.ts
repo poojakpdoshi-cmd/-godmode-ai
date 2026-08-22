@@ -1,5 +1,5 @@
 import * as db from "./db";
-import { invokeConfiguredModel, ProviderId, requireCallableModel } from "./providerRegistry";
+import { assertOpenRouterFreeAccess, invokeConfiguredModel, ProviderId, requireCallableModel } from "./providerRegistry";
 
 export type ChatSelection = { providerId: ProviderId; modelId: string };
 export type ChatMode = "solo" | "competition";
@@ -50,6 +50,7 @@ export async function sendChatMessage(input: { userId: number; conversationId: s
   const selections = validateChatSelections(input.mode, input.selections);
   if (input.research && selections.some(selection => selection.providerId !== "openrouter")) throw new Error("Live web research currently requires OpenRouter routing. Select one or more OpenRouter models, then send again.");
   const routedSelections = input.fast !== false && input.mode === "solo" && selections[0]?.providerId === "openrouter" ? [{ providerId: "openrouter" as const, modelId: "openrouter/free" }] : selections;
+  if (routedSelections.some(selection => selection.providerId === "openrouter")) await assertOpenRouterFreeAccess(input.userId);
   await Promise.all(routedSelections.map(selection => requireCallableModel(input.userId, selection.providerId, selection.modelId)));
   await db.updateConversationConfiguration({ userId: input.userId, conversationId: conversation.id, mode: input.mode, selectedModels: JSON.stringify(selections) });
   const userMessage = await db.appendConversationMessage({ userId: input.userId, conversationId: conversation.id, role: "user", content: input.content.trim() });
@@ -74,6 +75,7 @@ export async function prepareStreamedChat(input: { userId: number; conversationI
   if (!conversation) throw new Error("Conversation not found.");
   if (input.selection.providerId !== "openrouter") throw new Error("Fast streaming currently requires OpenRouter routing.");
   const selection: ChatSelection = { providerId: "openrouter", modelId: "openrouter/free" };
+  await assertOpenRouterFreeAccess(input.userId);
   await requireCallableModel(input.userId, selection.providerId, selection.modelId);
   await db.updateConversationConfiguration({ userId: input.userId, conversationId: conversation.id, mode: "solo", selectedModels: JSON.stringify([input.selection]) });
   const userMessage = await db.appendConversationMessage({ userId: input.userId, conversationId: conversation.id, role: "user", content: input.content.trim() });

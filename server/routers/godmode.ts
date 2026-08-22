@@ -16,14 +16,14 @@ function requireValue<T>(value: T | undefined, code: "NOT_FOUND" | "BAD_REQUEST"
 
 export const godmodeRouter = router({
   providers: router({
-    list: protectedProcedure.query(({ ctx }) => getModelRegistry(ctx.user.id)),
+    list: protectedProcedure.query(({ ctx }) => getModelRegistry(ctx.user.id, { verifyOpenRouterAccess: true })),
     connect: protectedProcedure.input(z.object({ providerId: z.enum(["openrouter", "respan"]), apiKey: z.string().trim().min(8).max(1_000) })).mutation(({ ctx, input }) => connectProvider(ctx.user.id, input.providerId, input.apiKey)),
     disconnect: protectedProcedure.input(z.object({ providerId: z.enum(["openrouter", "respan"]) })).mutation(({ ctx, input }) => disconnectProvider(ctx.user.id, input.providerId)),
-    refresh: protectedProcedure.mutation(({ ctx }) => { clearModelRegistryCache(ctx.user.id); return getModelRegistry(ctx.user.id, { force: true }); }),
+    refresh: protectedProcedure.mutation(({ ctx }) => { clearModelRegistryCache(ctx.user.id); return getModelRegistry(ctx.user.id, { force: true, verifyOpenRouterAccess: true }); }),
   }),
   models: router({
-    list: protectedProcedure.query(async ({ ctx }) => getModelRegistry(ctx.user.id)),
-    refresh: protectedProcedure.mutation(({ ctx }) => { clearModelRegistryCache(ctx.user.id); return getModelRegistry(ctx.user.id, { force: true }); }),
+    list: protectedProcedure.query(async ({ ctx }) => getModelRegistry(ctx.user.id, { verifyOpenRouterAccess: true })),
+    refresh: protectedProcedure.mutation(({ ctx }) => { clearModelRegistryCache(ctx.user.id); return getModelRegistry(ctx.user.id, { force: true, verifyOpenRouterAccess: true }); }),
   }),
   projects: router({
     list: protectedProcedure.query(({ ctx }) => db.listProjects(ctx.user.id)),

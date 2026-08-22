@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildProviderCompletionPayload, CallableModel, describeProviderRequestFailure, describeProviderTransportFailure, isVerifiedFreeOpenRouterModel, prioritizeFastFreeModels, ProviderDiagnostic, retainCallableModels } from "./providerRegistry";
+import { buildProviderCompletionPayload, CallableModel, describeProviderRequestFailure, describeProviderTransportFailure, isVerifiedFreeOpenRouterModel, prioritizeFastFreeModels, ProviderDiagnostic, retainCallableModels, selectManagedFastModels } from "./providerRegistry";
 
 const models: CallableModel[] = [
   { key: "platform:callable", providerId: "platform", providerName: "Platform catalog", modelId: "callable", displayName: "Callable", supportsTools: false, supportsVision: false, inputTypes: ["text"] },
@@ -52,5 +52,10 @@ describe("configured model registry", () => {
       { ...models[1], modelId: "openrouter/free", displayName: "Router" },
     ]);
     expect(candidates.map(model => model.modelId)).toEqual(["google/fast-free", "qwen/fast-free", "cohere/slow-free"]);
+  });
+
+  it("selects a real managed fallback from the live catalog even if preferred IDs change", () => {
+    expect(selectManagedFastModels([{ id: "claude-haiku-4-5" }, { id: "other" }]).map(model => model.modelId)).toEqual(["claude-haiku-4-5"]);
+    expect(selectManagedFastModels([{ id: "live-catalog-model" }]).map(model => model.modelId)).toEqual(["live-catalog-model"]);
   });
 });

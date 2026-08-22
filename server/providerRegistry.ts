@@ -1,6 +1,6 @@
 import * as db from "./db";
 import { decryptProviderKey, encryptProviderKey } from "./providerSecrets";
-import { invokeLLM } from "./_core/llm";
+import { invokeLLM, listLLMModels } from "./_core/llm";
 
 export type ProviderId = "platform" | "openrouter" | "respan";
 export type ProviderMessage = { role: "system" | "user" | "assistant"; content: string };
@@ -15,6 +15,7 @@ const PROVIDERS = {
   respan: { name: "Respan", baseUrl: "https://api.respan.ai/api" },
 } as const;
 const cache = new Map<number, { expiresAt: number; registry: ModelRegistry }>();
+const openRouterEligibilityCache = new Map<number, number>();
 const REQUEST_TIMEOUT_MS = 35_000;
 const FAST_COMPLETION_TOKEN_LIMIT = 360;
 const FIRST_TOKEN_TIMEOUT_MS = 4_500;
@@ -23,6 +24,23 @@ const FAST_FREE_MODEL_PREFIXES = ["google/", "qwen/", "meta-llama/", "mistralai/
 function cleanBaseUrl(value: string) { return value.replace(/\/$/, ""); }
 function textContent(content: unknown) { return typeof content === "string" ? content : Array.isArray(content) ? content.map(item => typeof item === "object" && item && "text" in item ? String(item.text ?? "") : "").filter(Boolean).join("\n") : ""; }
 function safeError(error: unknown) { return (error instanceof Error ? error.message : String(error)).replace(/Bearer\s+[^\s]+/gi, "Bearer [redacted]").slice(0, 500); }
+
+export function selectManagedFastModels(catalog: Array<{ id: string }>): CallableModel[] {
+  const preferred = catalog.filter(model => ["gpt-5-nano", "gpt-5-mini", "claude-haiku-4-5"].includes(model.id));
+  const selected = preferred.length ? preferred.slice(0, 2) : catalog.slice(0, 1);
+  return selected.map(model => ({ key: `platform:${model.id}`, providerId: "platform", providerName: "GODMODE Managed Fast", modelId: model.id, displayName: model.id === "gpt-5-nano" ? "Managed Fast" : `Managed · ${model.id}`, supportsTools: false, supportsVision: false, inputTypes: ["text"] }));
+}
+
+async function discoverManagedFastModels(): Promise<CallableModel[]> {
+  const catalog = await listLLMModels();
+  return selectManagedFastModels(catalog.data);
+}
+
+async function verifyOpenRouterFreeAccess(apiKey: string) {
+  const response = await fetch(`${PROVIDERS.openrouter.baseUrl}/chat/completions`, { method: "POST", headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json", "x-openrouter-title": "GODMODE AI" }, body: JSON.stringify({ model: "openrouter/free", messages: [{ role: "user", content: "ping" }], max_tokens: 1, max_completion_tokens: 1 }) });
+  if (!response.ok) throw new Error(describeProviderRequestFailure("OpenRouter", response.status, await response.text()));
+  try { await response.body?.cancel(); } catch { /* Body is already settled. */ }
+}
 
 export function describeProviderRequestFailure(providerName: string, status: number, bodyText: string) {
   let upstreamMessage = "";
@@ -162,12 +180,22 @@ async function compatibleModels(providerId: "openrouter" | "respan", apiKey: str
   return discovered;
 }
 
-export async function getModelRegistry(userId: number, options: { force?: boolean } = {}): Promise<ModelRegistry> {
+export async function getModelRegistry(userId: number, options: { force?: boolean; verifyOpenRouterAccess?: boolean } = {}): Promise<ModelRegistry> {
   const cached = cache.get(userId);
-  if (!options.force && cached && cached.expiresAt > Date.now()) return cached.registry;
+  const hasFreshOpenRouterEligibility = (openRouterEligibilityCache.get(userId) ?? 0) > Date.now();
+  if (!options.force && cached && cached.expiresAt > Date.now() && (!options.verifyOpenRouterAccess || hasFreshOpenRouterEligibility)) return cached.registry;
   const checkedAt = Date.now();
   const models: CallableModel[] = [];
   const diagnostics: ProviderDiagnostic[] = [];
+  try {
+    const managed = await discoverManagedFastModels();
+    if (managed.length) {
+      models.push(...managed);
+      diagnostics.push({ providerId: "platform", providerName: "GODMODE Managed Fast", configured: true, healthy: true, modelCount: managed.length, checkedAt, credentialStored: true });
+    }
+  } catch (error) {
+    diagnostics.push({ providerId: "platform", providerName: "GODMODE Managed Fast", configured: false, healthy: false, modelCount: 0, checkedAt, error: safeError(error) });
+  }
   const configurations = await db.listProviderConfigurations(userId);
   for (const providerId of ["openrouter", "respan"] as const) {
     const configuration = configurations.find(item => item.providerId === providerId && item.isEnabled === "yes" && item.credentialEncrypted);
@@ -176,6 +204,10 @@ export async function getModelRegistry(userId: number, options: { force?: boolea
       continue;
     }
     try {
+      if (providerId === "openrouter" && options.verifyOpenRouterAccess && (options.force || !hasFreshOpenRouterEligibility)) {
+        await verifyOpenRouterFreeAccess(decryptProviderKey(configuration.credentialEncrypted));
+        openRouterEligibilityCache.set(userId, Date.now() + 10 * 60_000);
+      }
       const discovered = await compatibleModels(providerId, decryptProviderKey(configuration.credentialEncrypted));
       models.push(...discovered);
       diagnostics.push({ providerId, providerName: PROVIDERS[providerId].name, configured: true, healthy: true, modelCount: discovered.length, checkedAt, credentialStored: true });
@@ -196,13 +228,26 @@ export async function getModelRegistry(userId: number, options: { force?: boolea
   return registry;
 }
 
-export async function getFastFreeCandidates(userId: number) {
-  return prioritizeFastFreeModels((await getModelRegistry(userId)).models).slice(0, 4);
+export async function assertOpenRouterFreeAccess(userId: number) {
+  const registry = await getModelRegistry(userId, { verifyOpenRouterAccess: true });
+  const diagnostic = registry.diagnostics.find(item => item.providerId === "openrouter");
+  if (!diagnostic?.healthy) {
+    throw new Error(diagnostic?.error || "OpenRouter free access is not verified for this account. Verify the API key credit limit and account balance, then refresh live access.");
+  }
+  return registry;
 }
 
-export function clearModelRegistryCache(userId?: number) { if (userId === undefined) cache.clear(); else cache.delete(userId); }
+export async function getFastFreeCandidates(userId: number) {
+  return prioritizeFastFreeModels((await assertOpenRouterFreeAccess(userId)).models).slice(0, 4);
+}
+
+export function clearModelRegistryCache(userId?: number) {
+  if (userId === undefined) { cache.clear(); openRouterEligibilityCache.clear(); }
+  else { cache.delete(userId); openRouterEligibilityCache.delete(userId); }
+}
 
 export async function connectProvider(userId: number, providerId: "openrouter" | "respan", apiKey: string) {
+  if (providerId === "openrouter") await verifyOpenRouterFreeAccess(apiKey.trim());
   const discovered = await compatibleModels(providerId, apiKey.trim());
   if (!discovered.length) throw new Error(`${PROVIDERS[providerId].name} did not expose any callable models for this key.`);
   await db.upsertProviderConfiguration({ userId, providerId, displayName: PROVIDERS[providerId].name, credentialEncrypted: encryptProviderKey(apiKey) });

@@ -51,5 +51,7 @@
 - [x] Implement streamed OpenRouter responses with incremental chat rendering and persistent final message metadata.
 - [ ] Test a live configured-provider normal and web-research request for first-visible response timing, final latency, tokens, and source citations.
 - [ ] Record and display first-token time separately from total completion latency for streamed chat responses.
-- [ ] Add latency-aware fast free-model selection with a truthful fallback path when the selected free upstream is congested or fails.
-- [ ] Show upstream queue/congestion diagnostics instead of implying a slow free model is an application-side delay.
+- [x] Add latency-aware fast free-model selection with a truthful fallback path when the selected free upstream is congested or fails.
+- [x] Show upstream queue/congestion diagnostics instead of implying a slow free model is an application-side delay.
+- [x] Detect and clearly surface account-level OpenRouter free-access eligibility failures before repeated chat attempts.
+- [x] Provide a live managed-catalog fallback route and prevent falsely advertising account-gated OpenRouter models as usable.
