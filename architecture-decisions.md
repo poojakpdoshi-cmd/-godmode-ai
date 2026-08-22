@@ -11,8 +11,12 @@ GODMODE exposes a model only after live discovery reports the provider as both c
 
 The OpenRouter provider contract follows the current documented `GET /api/v1/models` discovery endpoint and `POST /api/v1/chat/completions` request format.[1] [2]
 
+The uploaded G0DM0D3 archive is a separate Next.js/API project with chat, model selection, settings, and OpenRouter-related modules. GODMODE will take only high-level functional inspiration from it; it will retain its own data model, server contracts, interface composition, and visual system. The optional Respan gateway is documented as an OpenAI-compatible provider using `https://api.respan.ai/api/` with a Respan API key; its exact catalog-discovery behavior will be verified with a supplied key before models are shown.[3]
+
 ## References
 
 [1] [OpenRouter — List all models and their properties](https://openrouter.ai/docs/api/api-reference/models/list-all-models-and-their-properties)
 
 [2] [OpenRouter — API reference](https://openrouter.ai/docs/api_reference/overview)
+
+[3] [Respan — AI Gateway quickstart](https://www.respan.ai/docs/documentation/features/gateway/gateway-quickstart)

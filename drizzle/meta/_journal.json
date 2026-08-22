@@ -15,6 +15,13 @@
       "when": 1787416961294,
       "tag": "0001_colorful_wendigo",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1787419040336,
+      "tag": "0002_organic_lester",
+      "breakpoints": true
     }
   ]
 }

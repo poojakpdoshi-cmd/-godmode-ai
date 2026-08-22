@@ -1,11 +1,12 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "../db";
+import { retryChatMessage, sendChatMessage, validateChatSelections } from "../chatService";
 import { executeMission, retryRun, validateRunPlan } from "../orchestration";
-import { clearModelRegistryCache, getModelRegistry, ProviderId } from "../providerRegistry";
+import { clearModelRegistryCache, connectProvider, disconnectProvider, getModelRegistry, ProviderId } from "../providerRegistry";
 import { protectedProcedure, router } from "../_core/trpc";
 
-const providerIdSchema = z.enum(["platform", "openrouter"]);
+const providerIdSchema = z.enum(["platform", "openrouter", "respan"]);
 const selectedModelSchema = z.object({ providerId: providerIdSchema, modelId: z.string().min(1).max(255) });
 
 function requireValue<T>(value: T | undefined, code: "NOT_FOUND" | "BAD_REQUEST" = "NOT_FOUND"): T {
@@ -14,12 +15,15 @@ function requireValue<T>(value: T | undefined, code: "NOT_FOUND" | "BAD_REQUEST"
 }
 
 export const godmodeRouter = router({
+  providers: router({
+    list: protectedProcedure.query(({ ctx }) => getModelRegistry(ctx.user.id)),
+    connect: protectedProcedure.input(z.object({ providerId: z.enum(["openrouter", "respan"]), apiKey: z.string().trim().min(8).max(1_000) })).mutation(({ ctx, input }) => connectProvider(ctx.user.id, input.providerId, input.apiKey)),
+    disconnect: protectedProcedure.input(z.object({ providerId: z.enum(["openrouter", "respan"]) })).mutation(({ ctx, input }) => disconnectProvider(ctx.user.id, input.providerId)),
+    refresh: protectedProcedure.mutation(({ ctx }) => { clearModelRegistryCache(ctx.user.id); return getModelRegistry(ctx.user.id, { force: true }); }),
+  }),
   models: router({
-    list: protectedProcedure.query(async () => getModelRegistry()),
-    refresh: protectedProcedure.mutation(async () => {
-      clearModelRegistryCache();
-      return getModelRegistry({ force: true });
-    }),
+    list: protectedProcedure.query(async ({ ctx }) => getModelRegistry(ctx.user.id)),
+    refresh: protectedProcedure.mutation(({ ctx }) => { clearModelRegistryCache(ctx.user.id); return getModelRegistry(ctx.user.id, { force: true }); }),
   }),
   projects: router({
     list: protectedProcedure.query(({ ctx }) => db.listProjects(ctx.user.id)),
@@ -48,9 +52,28 @@ export const godmodeRouter = router({
   }),
   operations: router({
     summary: protectedProcedure.query(async ({ ctx }) => {
-      const [registry, runs] = await Promise.all([getModelRegistry(), db.listRecentRuns(ctx.user.id)]);
+      const [registry, runs] = await Promise.all([getModelRegistry(ctx.user.id), db.listRecentRuns(ctx.user.id)]);
       const errors = runs.filter(run => run.status === "failed");
       return { registry, runs, health: { availableModels: registry.models.length, healthyProviders: registry.diagnostics.filter(provider => provider.healthy).length, providerCount: registry.diagnostics.length, recentFailureCount: errors.length } };
+    }),
+  }),
+  chat: router({
+    list: protectedProcedure.query(({ ctx }) => db.listConversations(ctx.user.id)),
+    detail: protectedProcedure.input(z.object({ conversationId: z.string().min(1).max(36) })).query(async ({ ctx, input }) => requireValue(await db.getConversationDetail(ctx.user.id, input.conversationId))),
+    create: protectedProcedure.input(z.object({ title: z.string().trim().min(1).max(180).optional(), systemPrompt: z.string().trim().max(16_000).optional() })).mutation(({ ctx, input }) => db.createConversation({ userId: ctx.user.id, ...input })),
+    configure: protectedProcedure.input(z.object({ conversationId: z.string().min(1).max(36), systemPrompt: z.string().trim().max(16_000).nullable().optional(), mode: z.enum(["solo", "competition"]).optional(), selections: z.array(selectedModelSchema).min(1).max(6).optional() })).mutation(async ({ ctx, input }) => {
+      requireValue(await db.getConversationForUser(ctx.user.id, input.conversationId));
+      if (input.selections && input.mode) {
+        try { validateChatSelections(input.mode, input.selections as Array<{ providerId: ProviderId; modelId: string }>); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Invalid chat selection." }); }
+      }
+      await db.updateConversationConfiguration({ userId: ctx.user.id, conversationId: input.conversationId, systemPrompt: input.systemPrompt, mode: input.mode, selectedModels: input.selections ? JSON.stringify(input.selections) : undefined });
+      return requireValue(await db.getConversationDetail(ctx.user.id, input.conversationId));
+    }),
+    send: protectedProcedure.input(z.object({ conversationId: z.string().min(1).max(36), content: z.string().trim().min(1).max(32_000), mode: z.enum(["solo", "competition"]), selections: z.array(selectedModelSchema).min(1).max(6) })).mutation(async ({ ctx, input }) => {
+      try { return await sendChatMessage({ userId: ctx.user.id, conversationId: input.conversationId, content: input.content, mode: input.mode, selections: input.selections as Array<{ providerId: ProviderId; modelId: string }> }); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Chat request failed." }); }
+    }),
+    retry: protectedProcedure.input(z.object({ messageId: z.string().min(1).max(36) })).mutation(async ({ ctx, input }) => {
+      try { return await retryChatMessage({ userId: ctx.user.id, messageId: input.messageId }); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Retry failed." }); }
     }),
   }),
 });

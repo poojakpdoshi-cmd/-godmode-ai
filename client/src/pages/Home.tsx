@@ -1,5 +1,5 @@
-import GodmodeCommandCenter from "@/components/GodmodeCommandCenter";
+import GodmodeChatWorkspace from "@/components/GodmodeChatWorkspace";
 
 export default function Home() {
-  return <GodmodeCommandCenter />;
+  return <GodmodeChatWorkspace />;
 }

@@ -126,7 +126,8 @@ export const providerConfigurations = mysqlTable(
     userId: int("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
     providerId: varchar("providerId", { length: 64 }).notNull(),
     displayName: varchar("displayName", { length: 120 }).notNull(),
-    credentialSource: mysqlEnum("credentialSource", ["platform", "environment"]).notNull(),
+    credentialSource: mysqlEnum("credentialSource", ["platform", "environment", "encrypted_user_key"]).notNull(),
+    credentialEncrypted: text("credentialEncrypted"),
     isEnabled: mysqlEnum("isEnabled", ["yes", "no"]).default("yes").notNull(),
     lastCheckedAt: timestamp("lastCheckedAt"),
     lastError: text("lastError"),
@@ -136,9 +137,51 @@ export const providerConfigurations = mysqlTable(
   table => [uniqueIndex("provider_configs_user_provider_uq").on(table.userId, table.providerId)]
 );
 
+export const conversations = mysqlTable(
+  "conversations",
+  {
+    id: varchar("id", { length: 36 }).primaryKey(),
+    userId: int("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+    title: varchar("title", { length: 180 }).notNull(),
+    systemPrompt: text("systemPrompt"),
+    mode: mysqlEnum("mode", ["solo", "competition"]).default("solo").notNull(),
+    selectedModels: text("selectedModels").notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [index("conversations_user_updated_idx").on(table.userId, table.updatedAt)]
+);
+
+export const conversationMessages = mysqlTable(
+  "conversationMessages",
+  {
+    id: varchar("id", { length: 36 }).primaryKey(),
+    conversationId: varchar("conversationId", { length: 36 }).notNull().references(() => conversations.id, { onDelete: "cascade" }),
+    userId: int("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+    replyToMessageId: varchar("replyToMessageId", { length: 36 }),
+    role: mysqlEnum("role", ["user", "assistant"]).notNull(),
+    content: text("content").notNull(),
+    providerId: varchar("providerId", { length: 64 }),
+    modelId: varchar("modelId", { length: 255 }),
+    status: mysqlEnum("status", ["completed", "failed"]).default("completed").notNull(),
+    errorMessage: text("errorMessage"),
+    latencyMs: int("latencyMs"),
+    promptTokens: int("promptTokens"),
+    completionTokens: int("completionTokens"),
+    totalTokens: int("totalTokens"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [
+    index("conversation_messages_conversation_created_idx").on(table.conversationId, table.createdAt),
+    index("conversation_messages_user_created_idx").on(table.userId, table.createdAt),
+  ]
+);
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type Project = typeof projects.$inferSelect;
 export type Mission = typeof missions.$inferSelect;
 export type ExecutionRun = typeof executionRuns.$inferSelect;
 export type ExecutionEvent = typeof executionEvents.$inferSelect;
+export type Conversation = typeof conversations.$inferSelect;
+export type ConversationMessage = typeof conversationMessages.$inferSelect;

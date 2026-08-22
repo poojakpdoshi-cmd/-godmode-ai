@@ -11,6 +11,7 @@ vi.mock("./db", () => ({
   ...dbMocks,
   listProjects: vi.fn(),
   createProject: vi.fn(),
+  getConversationDetail: vi.fn(),
   getMissionDetail: vi.fn(),
   getMissionForUser: vi.fn(),
   createMission: vi.fn(),
@@ -58,5 +59,13 @@ describe("GODMODE user-scoped access", () => {
     await expect(caller.missions.list({ projectId: "another-user-project" })).rejects.toMatchObject({ code: "NOT_FOUND" } satisfies Partial<TRPCError>);
     expect(dbMocks.getProjectForUser).toHaveBeenCalledWith(operator.id, "another-user-project");
     expect(dbMocks.listMissions).not.toHaveBeenCalled();
+  });
+
+  it("rejects chat detail requests that do not belong to the authenticated user", async () => {
+    const dbModule = await import("./db");
+    vi.mocked(dbModule.getConversationDetail).mockResolvedValueOnce(undefined);
+    const caller = godmodeRouter.createCaller(context(operator));
+    await expect(caller.chat.detail({ conversationId: "another-user-thread" })).rejects.toMatchObject({ code: "NOT_FOUND" } satisfies Partial<TRPCError>);
+    expect(dbModule.getConversationDetail).toHaveBeenCalledWith(operator.id, "another-user-thread");
   });
 });

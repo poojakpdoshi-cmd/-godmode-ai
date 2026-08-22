@@ -28,14 +28,22 @@ export function deriveMissionStatusFromLatestRuns(runs: Array<{ providerId: stri
 }
 
 async function executeRun(input: { userId: number; missionId: string; projectId: string; mode: MissionMode; selection: SelectedModel; command: string; systemPrompt?: string | null }) {
-  await requireCallableModel(input.selection.providerId, input.selection.modelId);
+  await requireCallableModel(input.userId, input.selection.providerId, input.selection.modelId);
   const run = await db.createRun({ userId: input.userId, missionId: input.missionId, projectId: input.projectId, providerId: input.selection.providerId, modelId: input.selection.modelId, mode: input.mode });
   await db.createExecutionEvent({ userId: input.userId, missionId: input.missionId, runId: run.id, type: "RUN_QUEUED", level: "info", summary: `${input.selection.modelId} is queued.`, metadata: { providerId: input.selection.providerId, modelId: input.selection.modelId } });
   await db.updateRunStarted(input.userId, run.id);
   await db.createExecutionEvent({ userId: input.userId, missionId: input.missionId, runId: run.id, type: "REQUEST_STARTED", level: "info", summary: `${input.selection.modelId} request started.` });
   const startedAt = Date.now();
   try {
-    const result = await invokeConfiguredModel({ providerId: input.selection.providerId, modelId: input.selection.modelId, command: input.command, systemPrompt: input.systemPrompt });
+    const result = await invokeConfiguredModel({
+      userId: input.userId,
+      providerId: input.selection.providerId,
+      modelId: input.selection.modelId,
+      messages: [
+        ...(input.systemPrompt ? [{ role: "system" as const, content: input.systemPrompt }] : []),
+        { role: "user" as const, content: input.command },
+      ],
+    });
     const latencyMs = Date.now() - startedAt;
     await db.updateRunSucceeded(input.userId, run.id, { output: result.output, latencyMs, ...result.usage });
     await db.createExecutionEvent({ userId: input.userId, missionId: input.missionId, runId: run.id, type: "REQUEST_SUCCEEDED", level: "success", summary: `${input.selection.modelId} returned a result.`, metadata: { latencyMs, usage: result.usage } });

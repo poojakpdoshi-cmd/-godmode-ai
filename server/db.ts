@@ -1,13 +1,16 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { nanoid } from "nanoid";
 import {
   executionEvents,
   executionRuns,
   InsertUser,
+  conversationMessages,
+  conversations,
   missions,
   missionMessages,
   projects,
+  providerConfigurations,
   users,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
@@ -180,4 +183,152 @@ export async function listRecentRuns(userId: number, limit = 12) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(executionRuns).where(eq(executionRuns.userId, userId)).orderBy(desc(executionRuns.createdAt)).limit(limit);
+}
+
+export async function listProviderConfigurations(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(providerConfigurations).where(eq(providerConfigurations.userId, userId));
+}
+
+export async function getProviderConfiguration(userId: number, providerId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  return (await db.select().from(providerConfigurations).where(and(eq(providerConfigurations.userId, userId), eq(providerConfigurations.providerId, providerId))).limit(1))[0];
+}
+
+export async function upsertProviderConfiguration(input: {
+  userId: number;
+  providerId: string;
+  displayName: string;
+  credentialEncrypted: string;
+  lastError?: string | null;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is unavailable");
+  const existing = await getProviderConfiguration(input.userId, input.providerId);
+  const values = {
+    displayName: input.displayName,
+    credentialSource: "encrypted_user_key" as const,
+    credentialEncrypted: input.credentialEncrypted,
+    isEnabled: "yes" as const,
+    lastCheckedAt: new Date(),
+    lastError: input.lastError ?? null,
+  };
+  if (existing) {
+    await db.update(providerConfigurations).set(values).where(eq(providerConfigurations.id, existing.id));
+    return { ...existing, ...values };
+  }
+  const configuration = { id: id(), userId: input.userId, providerId: input.providerId, ...values };
+  await db.insert(providerConfigurations).values(configuration);
+  return configuration;
+}
+
+export async function disableProviderConfiguration(userId: number, providerId: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is unavailable");
+  await db.update(providerConfigurations).set({ isEnabled: "no", credentialEncrypted: null, lastError: null, lastCheckedAt: new Date() }).where(and(eq(providerConfigurations.userId, userId), eq(providerConfigurations.providerId, providerId)));
+}
+
+export async function createConversation(input: { userId: number; title?: string; systemPrompt?: string; mode?: "solo" | "competition"; selectedModels?: string }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is unavailable");
+  const conversation = {
+    id: id(),
+    userId: input.userId,
+    title: input.title?.trim() || "New conversation",
+    systemPrompt: input.systemPrompt?.trim() || null,
+    mode: input.mode ?? "solo",
+    selectedModels: input.selectedModels ?? "[]",
+  };
+  await db.insert(conversations).values(conversation);
+  return conversation;
+}
+
+export async function listConversations(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(conversations).where(eq(conversations.userId, userId)).orderBy(desc(conversations.updatedAt));
+}
+
+export async function getConversationForUser(userId: number, conversationId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  return (await db.select().from(conversations).where(and(eq(conversations.id, conversationId), eq(conversations.userId, userId))).limit(1))[0];
+}
+
+export async function updateConversationConfiguration(input: { userId: number; conversationId: string; systemPrompt?: string | null; mode?: "solo" | "competition"; selectedModels?: string; title?: string }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is unavailable");
+  const values: { systemPrompt?: string | null; mode?: "solo" | "competition"; selectedModels?: string; title?: string } = {};
+  if (input.systemPrompt !== undefined) values.systemPrompt = input.systemPrompt;
+  if (input.mode !== undefined) values.mode = input.mode;
+  if (input.selectedModels !== undefined) values.selectedModels = input.selectedModels;
+  if (input.title !== undefined) values.title = input.title;
+  if (Object.keys(values).length) {
+    await db.update(conversations).set(values).where(and(eq(conversations.id, input.conversationId), eq(conversations.userId, input.userId)));
+  }
+}
+
+export async function updateConversationTitle(userId: number, conversationId: string, title: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is unavailable");
+  await db.update(conversations).set({ title }).where(and(eq(conversations.id, conversationId), eq(conversations.userId, userId)));
+}
+
+export async function appendConversationMessage(input: {
+  userId: number;
+  conversationId: string;
+  replyToMessageId?: string;
+  role: "user" | "assistant";
+  content: string;
+  providerId?: string;
+  modelId?: string;
+  status?: "completed" | "failed";
+  errorMessage?: string;
+  latencyMs?: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is unavailable");
+  const message = {
+    id: id(),
+    userId: input.userId,
+    conversationId: input.conversationId,
+    replyToMessageId: input.replyToMessageId ?? null,
+    role: input.role,
+    content: input.content,
+    providerId: input.providerId ?? null,
+    modelId: input.modelId ?? null,
+    status: input.status ?? "completed" as const,
+    errorMessage: input.errorMessage ?? null,
+    latencyMs: input.latencyMs ?? null,
+    promptTokens: input.promptTokens ?? null,
+    completionTokens: input.completionTokens ?? null,
+    totalTokens: input.totalTokens ?? null,
+  };
+  await db.insert(conversationMessages).values(message);
+  await db.update(conversations).set({ updatedAt: new Date() }).where(and(eq(conversations.id, input.conversationId), eq(conversations.userId, input.userId)));
+  return message;
+}
+
+export async function listConversationMessages(userId: number, conversationId: string) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(conversationMessages).where(and(eq(conversationMessages.conversationId, conversationId), eq(conversationMessages.userId, userId))).orderBy(asc(conversationMessages.createdAt));
+}
+
+export async function getConversationMessageForUser(userId: number, messageId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  return (await db.select().from(conversationMessages).where(and(eq(conversationMessages.id, messageId), eq(conversationMessages.userId, userId))).limit(1))[0];
+}
+
+export async function getConversationDetail(userId: number, conversationId: string) {
+  const conversation = await getConversationForUser(userId, conversationId);
+  if (!conversation) return undefined;
+  const messages = await listConversationMessages(userId, conversationId);
+  return { conversation, messages };
 }
