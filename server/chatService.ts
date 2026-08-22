@@ -7,7 +7,7 @@ export type ProviderMessage = { role: "system" | "user" | "assistant"; content: 
 const MAX_HISTORY_TURNS = 12;
 const MAX_HISTORY_CHARACTERS = 24_000;
 const FAST_RESPONSE_POLICY = "Fast response profile is active. Give the direct answer first, keep the answer under 160 words unless the user explicitly asks for depth, avoid restating the request, and use concise bullets only when they improve clarity.";
-const FAST_POLICY_CHARACTER_LIMIT = 6_000;
+const FAST_POLICY_CHARACTER_LIMIT = 1_800;
 
 export function validateChatSelections(mode: ChatMode, selections: ChatSelection[]) {
   const unique = selections.filter((selection, index, list) => list.findIndex(candidate => candidate.providerId === selection.providerId && candidate.modelId === selection.modelId) === index);
@@ -18,8 +18,8 @@ export function validateChatSelections(mode: ChatMode, selections: ChatSelection
 
 export function compileExecutionPolicy(systemPrompt: string | null, fast = true) {
   if (!systemPrompt || !fast || systemPrompt.length <= FAST_POLICY_CHARACTER_LIMIT) return systemPrompt;
-  const opening = systemPrompt.slice(0, 4_800);
-  const closing = systemPrompt.slice(-1_000);
+  const opening = systemPrompt.slice(0, 1_300);
+  const closing = systemPrompt.slice(-300);
   return `${opening}\n\n[Fast execution policy: the full saved prompt is retained, but this request uses the opening and closing instructions to minimize provider latency.]\n\n${closing}`;
 }
 
@@ -67,6 +67,27 @@ export async function sendChatMessage(input: { userId: number; conversationId: s
     }
   }));
   return db.getConversationDetail(input.userId, conversation.id);
+}
+
+export async function prepareStreamedChat(input: { userId: number; conversationId: string; content: string; selection: ChatSelection }) {
+  const conversation = await db.getConversationForUser(input.userId, input.conversationId);
+  if (!conversation) throw new Error("Conversation not found.");
+  if (input.selection.providerId !== "openrouter") throw new Error("Fast streaming currently requires OpenRouter routing.");
+  const selection: ChatSelection = { providerId: "openrouter", modelId: "openrouter/free" };
+  await requireCallableModel(input.userId, selection.providerId, selection.modelId);
+  await db.updateConversationConfiguration({ userId: input.userId, conversationId: conversation.id, mode: "solo", selectedModels: JSON.stringify([input.selection]) });
+  const userMessage = await db.appendConversationMessage({ userId: input.userId, conversationId: conversation.id, role: "user", content: input.content.trim() });
+  if (conversation.title === "New conversation") await db.updateConversationTitle(input.userId, conversation.id, titleFromMessage(input.content));
+  const history = await db.listConversationMessages(input.userId, conversation.id);
+  return { conversationId: conversation.id, userMessageId: userMessage.id, selection, messages: buildProviderMessages(conversation.systemPrompt, history, true) };
+}
+
+export async function persistStreamedAssistantMessage(input: { userId: number; conversationId: string; userMessageId: string; selection: ChatSelection; output: string; latencyMs: number; usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number } }) {
+  await db.appendConversationMessage({ userId: input.userId, conversationId: input.conversationId, replyToMessageId: input.userMessageId, role: "assistant", content: input.output || "The provider returned an empty response.", providerId: input.selection.providerId, modelId: input.selection.modelId, status: "completed", latencyMs: input.latencyMs, ...input.usage });
+}
+
+export async function persistStreamedFailure(input: { userId: number; conversationId: string; userMessageId: string; selection: ChatSelection; errorMessage: string; latencyMs: number }) {
+  await db.appendConversationMessage({ userId: input.userId, conversationId: input.conversationId, replyToMessageId: input.userMessageId, role: "assistant", content: "", providerId: input.selection.providerId, modelId: input.selection.modelId, status: "failed", errorMessage: input.errorMessage.slice(0, 1_500), latencyMs: input.latencyMs });
 }
 
 export async function retryChatMessage(input: { userId: number; messageId: string }) {

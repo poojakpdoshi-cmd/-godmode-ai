@@ -46,3 +46,7 @@
 - [ ] Test normal chat latency and live web-research behavior with a configured provider, then compare execution timings and accuracy.
 - [x] Compile oversized saved system prompts into a compact, deterministic execution policy for fast requests while retaining the full user-authored prompt in storage.
 - [x] Route ordinary fast-mode free chats through OpenRouter’s Free Models Router unless the user explicitly opts into a different model.
+- [ ] Reduce fast-mode compiled prompt payload below 1,800 characters while retaining the full saved prompt in storage, then verify lower real prompt-token usage.
+- [x] Add an always-visible composer Web Search control rather than requiring users to open the side configuration panel.
+- [x] Implement streamed OpenRouter responses with incremental chat rendering and persistent final message metadata.
+- [ ] Test a live configured-provider normal and web-research request for first-visible response timing, final latency, tokens, and source citations.

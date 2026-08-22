@@ -8,6 +8,9 @@ import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
+import { sdk } from "./sdk";
+import { prepareStreamedChat, persistStreamedAssistantMessage, persistStreamedFailure } from "../chatService";
+import { streamConfiguredModel } from "../providerRegistry";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -36,6 +39,35 @@ async function startServer() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerStorageProxy(app);
   registerOAuthRoutes(app);
+  app.post("/api/godmode/stream", async (req, res) => {
+    const user = await sdk.authenticateRequest(req).catch(() => null);
+    if (!user) { res.status(401).json({ error: "Authentication required." }); return; }
+    const input = req.body as { conversationId?: string; content?: string; selection?: { providerId?: string; modelId?: string } };
+    if (!input.conversationId || !input.content?.trim() || input.content.length > 32_000 || input.selection?.providerId !== "openrouter" || !input.selection.modelId) { res.status(400).json({ error: "Invalid streaming chat request." }); return; }
+    res.status(200);
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+    const write = (event: string, payload: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+    let plan: Awaited<ReturnType<typeof prepareStreamedChat>> | null = null;
+    let startedAt = Date.now();
+    try {
+      plan = await prepareStreamedChat({ userId: user.id, conversationId: input.conversationId, content: input.content, selection: { providerId: "openrouter", modelId: input.selection.modelId } });
+      write("meta", { modelId: plan.selection.modelId });
+      startedAt = Date.now();
+      const result = await streamConfiguredModel({ userId: user.id, providerId: plan.selection.providerId, modelId: plan.selection.modelId, messages: plan.messages }, (chunk: string) => write("delta", { chunk }));
+      const latencyMs = Date.now() - startedAt;
+      await persistStreamedAssistantMessage({ userId: user.id, conversationId: plan.conversationId, userMessageId: plan.userMessageId, selection: plan.selection, output: result.output, latencyMs, usage: result.usage });
+      write("done", { latencyMs, usage: result.usage });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Streaming request failed.";
+      if (plan) await persistStreamedFailure({ userId: user.id, conversationId: plan.conversationId, userMessageId: plan.userMessageId, selection: plan.selection, errorMessage: message, latencyMs: Date.now() - startedAt }).catch(() => undefined);
+      write("error", { message });
+    } finally {
+      res.end();
+    }
+  });
   // tRPC API
   app.use(
     "/api/trpc",

@@ -14,7 +14,7 @@ const provider = vi.hoisted(() => ({ requireCallableModel: vi.fn(), invokeConfig
 vi.mock("./db", () => db);
 vi.mock("./providerRegistry", () => provider);
 
-import { buildProviderMessages, compileExecutionPolicy, retryChatMessage, sendChatMessage } from "./chatService";
+import { buildProviderMessages, compileExecutionPolicy, prepareStreamedChat, retryChatMessage, sendChatMessage } from "./chatService";
 
 const conversation = { id: "conversation-1", userId: 7, title: "New conversation", systemPrompt: "Be concise and write TypeScript.", mode: "solo" as const, selectedModels: "[]" };
 
@@ -59,8 +59,16 @@ describe("chat execution service", () => {
     const compiled = compileExecutionPolicy(longPrompt);
     expect(compiled).toContain("Fast execution policy");
     expect(compiled?.length).toBeLessThan(longPrompt.length);
+    expect(compiled?.length).toBeLessThanOrEqual(1_800);
     expect(compiled?.startsWith("A")).toBe(true);
-    expect(compiled?.endsWith("B".repeat(1_000))).toBe(true);
+    expect(compiled?.endsWith("B".repeat(300))).toBe(true);
+  });
+
+  it("prepares a user-scoped streamed request through the free router while keeping the saved selection", async () => {
+    const plan = await prepareStreamedChat({ userId: 7, conversationId: conversation.id, content: "Stream hello", selection: { providerId: "openrouter", modelId: "cohere/north-mini-code:free" } });
+    expect(plan.selection).toEqual({ providerId: "openrouter", modelId: "openrouter/free" });
+    expect(db.updateConversationConfiguration).toHaveBeenCalledWith(expect.objectContaining({ userId: 7, conversationId: conversation.id, selectedModels: JSON.stringify([{ providerId: "openrouter", modelId: "cohere/north-mini-code:free" }]) }));
+    expect(provider.requireCallableModel).toHaveBeenCalledWith(7, "openrouter", "openrouter/free");
   });
 
   it("persists the genuine model response with provider metadata", async () => {

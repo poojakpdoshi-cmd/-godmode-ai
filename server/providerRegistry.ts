@@ -57,6 +57,57 @@ export function buildProviderCompletionPayload(input: { providerId: ProviderId; 
   };
 }
 
+export async function streamConfiguredModel(input: { userId: number; providerId: ProviderId; modelId: string; messages: ProviderMessage[] }, onChunk: (chunk: string) => void): Promise<CompletionResult> {
+  await requireCallableModel(input.userId, input.providerId, input.modelId);
+  if (input.providerId === "platform") throw new Error("Streaming is not available for the platform provider.");
+  const configuration = await db.getProviderConfiguration(input.userId, input.providerId);
+  if (!configuration?.credentialEncrypted || configuration.isEnabled !== "yes") throw new Error(`${PROVIDERS[input.providerId].name} is not connected for this user.`);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(`${cleanBaseUrl(PROVIDERS[input.providerId].baseUrl)}/chat/completions`, {
+      method: "POST",
+      signal: controller.signal,
+      headers: { authorization: `Bearer ${decryptProviderKey(configuration.credentialEncrypted)}`, "content-type": "application/json", ...(input.providerId === "openrouter" ? { "x-openrouter-title": "GODMODE AI" } : {}) },
+      body: JSON.stringify({ ...buildProviderCompletionPayload(input), stream: true, stream_options: { include_usage: true } }),
+    });
+  } catch (error) {
+    throw new Error(describeProviderTransportFailure(PROVIDERS[input.providerId].name, error));
+  } finally {
+    clearTimeout(timeout);
+  }
+  if (!response.ok) throw new Error(describeProviderRequestFailure(PROVIDERS[input.providerId].name, response.status, await response.text()));
+  if (!response.body) throw new Error(`${PROVIDERS[input.providerId].name} opened an empty streaming response.`);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let output = "";
+  let usage: CompletionResult["usage"];
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let divider = buffer.indexOf("\n\n");
+    while (divider !== -1) {
+      const event = buffer.slice(0, divider);
+      buffer = buffer.slice(divider + 2);
+      divider = buffer.indexOf("\n\n");
+      const data = event.split("\n").filter(line => line.startsWith("data:")).map(line => line.slice(5).trim()).join("\n");
+      if (!data || data === "[DONE]") continue;
+      try {
+        const payload = JSON.parse(data) as { choices?: Array<{ delta?: { content?: unknown } }>; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } };
+        const chunk = textContent(payload.choices?.[0]?.delta?.content);
+        if (chunk) { output += chunk; onChunk(chunk); }
+        if (payload.usage) usage = { promptTokens: payload.usage.prompt_tokens, completionTokens: payload.usage.completion_tokens, totalTokens: payload.usage.total_tokens };
+      } catch {
+        // Ignore malformed non-content SSE frames from the upstream provider.
+      }
+    }
+  }
+  return { output, usage };
+}
+
 export function retainCallableModels(models: CallableModel[], diagnostics: ProviderDiagnostic[]) {
   const healthy = new Set(diagnostics.filter(diagnostic => diagnostic.configured && diagnostic.healthy).map(diagnostic => diagnostic.providerId));
   return models.filter(model => healthy.has(model.providerId));

@@ -50,3 +50,8 @@
 .research-toggle span { font: 700 10px "IBM Plex Mono", monospace; }
 .research-toggle small { color: #6f8f9d; font-size: 8px; line-height: 1.35; text-align: right; }
 .research-toggle.active { border-color: rgba(117, 233, 196, .62); background: rgba(74, 214, 175, .12); color: #a9f5d6; }
+
+.composer-mode-actions { display: flex; align-items: center; gap: 9px; }
+.composer-research { display: inline-flex; align-items: center; gap: 4px; border: 1px solid rgba(137, 193, 224, .3); background: rgba(8, 20, 30, .62); color: #9ec0d0; padding: 4px 6px; font: 700 8px "IBM Plex Mono", monospace; }
+.composer-research.active { border-color: rgba(114, 235, 196, .65); background: rgba(74, 214, 175, .15); color: #aef6d9; }
+.stream-preview .markdown-response { min-height: 24px; }
