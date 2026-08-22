@@ -55,3 +55,4 @@
 - [x] Show upstream queue/congestion diagnostics instead of implying a slow free model is an application-side delay.
 - [x] Detect and clearly surface account-level OpenRouter free-access eligibility failures before repeated chat attempts.
 - [x] Provide a live managed-catalog fallback route and prevent falsely advertising account-gated OpenRouter models as usable.
+- [x] Diagnose and fix the reported blank preview with its current runtime error before any further live-provider testing.
