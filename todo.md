@@ -36,3 +36,7 @@
 - [x] Investigate the preview browser error counter, resolve application-side causes, and verify the cleaned diagnostic state.
 - [x] Confirm no new browser-console errors occur after the restart and state-loop fix using fresh diagnostic evidence.
 - [x] Prevent oversized system prompts from producing raw validation errors by adding an explicit supported limit, character feedback, and friendly recovery guidance.
+- [x] Diagnose the observed 10-second model latency and fetch failure using real execution and network diagnostics.
+- [x] Reduce app-side chat latency through bounded context, output controls, fast routing defaults, and reliable retry behavior.
+- [x] Add latency and transient-fetch failure tests for bounded history and retryable provider diagnostics.
+- [ ] Verify the optimized request path against a live user-configured provider and compare the recorded latency with the prior execution.

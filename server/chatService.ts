@@ -4,6 +4,8 @@ import { invokeConfiguredModel, ProviderId, requireCallableModel } from "./provi
 export type ChatSelection = { providerId: ProviderId; modelId: string };
 export type ChatMode = "solo" | "competition";
 export type ProviderMessage = { role: "system" | "user" | "assistant"; content: string };
+const MAX_HISTORY_TURNS = 12;
+const MAX_HISTORY_CHARACTERS = 24_000;
 
 export function validateChatSelections(mode: ChatMode, selections: ChatSelection[]) {
   const unique = selections.filter((selection, index, list) => list.findIndex(candidate => candidate.providerId === selection.providerId && candidate.modelId === selection.modelId) === index);
@@ -13,9 +15,17 @@ export function validateChatSelections(mode: ChatMode, selections: ChatSelection
 }
 
 export function buildProviderMessages(systemPrompt: string | null, messages: Array<{ role: string; content: string; status: string }>): ProviderMessage[] {
+  const completedTurns = messages.filter(message => message.status === "completed" && (message.role === "user" || message.role === "assistant")).slice(-MAX_HISTORY_TURNS);
+  const recentTurns: ProviderMessage[] = [];
+  let characters = 0;
+  for (const message of [...completedTurns].reverse()) {
+    if (recentTurns.length && characters + message.content.length > MAX_HISTORY_CHARACTERS) break;
+    characters += message.content.length;
+    recentTurns.unshift({ role: message.role as "user" | "assistant", content: message.content });
+  }
   return [
     ...(systemPrompt ? [{ role: "system" as const, content: systemPrompt }] : []),
-    ...messages.filter(message => message.status === "completed" && (message.role === "user" || message.role === "assistant")).map(message => ({ role: message.role as "user" | "assistant", content: message.content })),
+    ...recentTurns,
   ];
 }
 

@@ -40,6 +40,14 @@ describe("chat execution service", () => {
     ]);
   });
 
+  it("bounds old conversation history while preserving the most recent completed turn", () => {
+    const turns = Array.from({ length: 16 }, (_, index) => ({ role: index % 2 ? "assistant" : "user", content: `turn-${index}`, status: "completed" }));
+    const providerMessages = buildProviderMessages(null, turns);
+    expect(providerMessages).toHaveLength(12);
+    expect(providerMessages[0]?.content).toBe("turn-4");
+    expect(providerMessages.at(-1)?.content).toBe("turn-15");
+  });
+
   it("persists the genuine model response with provider metadata", async () => {
     provider.invokeConfiguredModel.mockResolvedValue({ output: "function sum(a,b){ return a+b; }", usage: { totalTokens: 22 } });
     await sendChatMessage({ userId: 7, conversationId: conversation.id, content: "Write a function", mode: "solo", selections: [{ providerId: "openrouter", modelId: "qwen/test" }] });

@@ -15,6 +15,8 @@ const PROVIDERS = {
   respan: { name: "Respan", baseUrl: "https://api.respan.ai/api" },
 } as const;
 const cache = new Map<number, { expiresAt: number; registry: ModelRegistry }>();
+const REQUEST_TIMEOUT_MS = 35_000;
+const FAST_COMPLETION_TOKEN_LIMIT = 360;
 
 function cleanBaseUrl(value: string) { return value.replace(/\/$/, ""); }
 function textContent(content: unknown) { return typeof content === "string" ? content : Array.isArray(content) ? content.map(item => typeof item === "object" && item && "text" in item ? String(item.text ?? "") : "").filter(Boolean).join("\n") : ""; }
@@ -34,6 +36,12 @@ export function describeProviderRequestFailure(providerName: string, status: num
   if (status === 429) return `${providerName} is rate-limiting this account. Wait briefly, then retry this exact model.`;
   const detail = upstreamMessage.replace(/Bearer\s+[^\s]+/gi, "Bearer [redacted]").replace(/\s+/g, " ").trim().slice(0, 280);
   return detail ? `${providerName} request failed (HTTP ${status}): ${detail}` : `${providerName} request failed with HTTP ${status}.`;
+}
+
+export function describeProviderTransportFailure(providerName: string, error: unknown) {
+  if (error instanceof DOMException && error.name === "AbortError") return `${providerName} did not respond within ${REQUEST_TIMEOUT_MS / 1000} seconds. The request was stopped safely; retry the same model once the provider is available.`;
+  const detail = safeError(error).replace(/^TypeError:\s*/i, "");
+  return `${providerName} could not be reached for this request. No response was generated. Check the connection and retry the same model.${detail && detail !== "fetch failed" ? ` Detail: ${detail}` : ""}`;
 }
 
 export function retainCallableModels(models: CallableModel[], diagnostics: ProviderDiagnostic[]) {
@@ -89,7 +97,15 @@ export async function getModelRegistry(userId: number, options: { force?: boolea
       diagnostics.push({ providerId, providerName: PROVIDERS[providerId].name, configured: true, healthy: false, modelCount: 0, checkedAt, credentialStored: true, error: safeError(error) });
     }
   }
-  const registry = { models: retainCallableModels(models, diagnostics).sort((a, b) => a.displayName.localeCompare(b.displayName)), diagnostics, checkedAt };
+  const registry = {
+    models: retainCallableModels(models, diagnostics).sort((a, b) => {
+      if (a.modelId === "openrouter/free") return -1;
+      if (b.modelId === "openrouter/free") return 1;
+      return a.displayName.localeCompare(b.displayName);
+    }),
+    diagnostics,
+    checkedAt,
+  };
   cache.set(userId, { registry, expiresAt: Date.now() + 30_000 });
   return registry;
 }
@@ -124,7 +140,27 @@ export async function invokeConfiguredModel(input: { userId: number; providerId:
   }
   const configuration = await db.getProviderConfiguration(input.userId, input.providerId);
   if (!configuration?.credentialEncrypted || configuration.isEnabled !== "yes") throw new Error(`${PROVIDERS[input.providerId].name} is not connected for this user.`);
-  const response = await fetch(`${cleanBaseUrl(PROVIDERS[input.providerId].baseUrl)}/chat/completions`, { method: "POST", headers: { authorization: `Bearer ${decryptProviderKey(configuration.credentialEncrypted)}`, "content-type": "application/json", ...(input.providerId === "openrouter" ? { "x-openrouter-title": "GODMODE AI" } : {}) }, body: JSON.stringify({ model: input.modelId, messages: input.messages }) });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(`${cleanBaseUrl(PROVIDERS[input.providerId].baseUrl)}/chat/completions`, {
+      method: "POST",
+      signal: controller.signal,
+      headers: { authorization: `Bearer ${decryptProviderKey(configuration.credentialEncrypted)}`, "content-type": "application/json", ...(input.providerId === "openrouter" ? { "x-openrouter-title": "GODMODE AI" } : {}) },
+      body: JSON.stringify({
+        model: input.modelId,
+        messages: input.messages,
+        max_completion_tokens: FAST_COMPLETION_TOKEN_LIMIT,
+        max_tokens: FAST_COMPLETION_TOKEN_LIMIT,
+        ...(input.providerId === "openrouter" ? { provider: { sort: "latency", allow_fallbacks: true } } : {}),
+      }),
+    });
+  } catch (error) {
+    throw new Error(describeProviderTransportFailure(PROVIDERS[input.providerId].name, error));
+  } finally {
+    clearTimeout(timeout);
+  }
   const bodyText = await response.text();
   if (!response.ok) throw new Error(describeProviderRequestFailure(PROVIDERS[input.providerId].name, response.status, bodyText));
   const body = JSON.parse(bodyText) as { choices?: Array<{ message?: { content?: unknown } }>; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } };
