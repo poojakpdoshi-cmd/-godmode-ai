@@ -1,0 +1,8 @@
+.legacy-model-warning {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 7px 0 0;
+  color: #f3c774;
+  font: 700 8px "IBM Plex Mono", monospace;
+}

@@ -30,3 +30,4 @@
 - [x] Filter the OpenRouter registry and chat routing to genuinely free models only, with paid models excluded from selection.
 - [x] Add clear free-only model labels and automated tests for pricing-based model exclusion.
 - [x] Block retries and sends that target legacy paid OpenRouter models, and direct the user to choose a current free model instead.
+- [x] Prevent invalid legacy selections before request submission and replace generic model errors with a clear free-model recovery action.
