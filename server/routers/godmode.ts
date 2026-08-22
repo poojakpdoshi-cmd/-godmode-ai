@@ -69,8 +69,8 @@ export const godmodeRouter = router({
       await db.updateConversationConfiguration({ userId: ctx.user.id, conversationId: input.conversationId, systemPrompt: input.systemPrompt, mode: input.mode, selectedModels: input.selections ? JSON.stringify(input.selections) : undefined });
       return requireValue(await db.getConversationDetail(ctx.user.id, input.conversationId));
     }),
-    send: protectedProcedure.input(z.object({ conversationId: z.string().min(1).max(36), content: z.string().trim().min(1).max(32_000), mode: z.enum(["solo", "competition"]), selections: z.array(selectedModelSchema).min(1).max(6) })).mutation(async ({ ctx, input }) => {
-      try { return await sendChatMessage({ userId: ctx.user.id, conversationId: input.conversationId, content: input.content, mode: input.mode, selections: input.selections as Array<{ providerId: ProviderId; modelId: string }> }); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Chat request failed." }); }
+    send: protectedProcedure.input(z.object({ conversationId: z.string().min(1).max(36), content: z.string().trim().min(1).max(32_000), mode: z.enum(["solo", "competition"]), selections: z.array(selectedModelSchema).min(1).max(6), fast: z.boolean().optional(), research: z.boolean().optional() })).mutation(async ({ ctx, input }) => {
+      try { return await sendChatMessage({ userId: ctx.user.id, conversationId: input.conversationId, content: input.content, mode: input.mode, selections: input.selections as Array<{ providerId: ProviderId; modelId: string }>, fast: input.fast, research: input.research }); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Chat request failed." }); }
     }),
     retry: protectedProcedure.input(z.object({ messageId: z.string().min(1).max(36) })).mutation(async ({ ctx, input }) => {
       try { return await retryChatMessage({ userId: ctx.user.id, messageId: input.messageId }); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Retry failed." }); }

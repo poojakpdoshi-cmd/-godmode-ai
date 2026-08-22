@@ -14,7 +14,7 @@ const provider = vi.hoisted(() => ({ requireCallableModel: vi.fn(), invokeConfig
 vi.mock("./db", () => db);
 vi.mock("./providerRegistry", () => provider);
 
-import { buildProviderMessages, retryChatMessage, sendChatMessage } from "./chatService";
+import { buildProviderMessages, compileExecutionPolicy, retryChatMessage, sendChatMessage } from "./chatService";
 
 const conversation = { id: "conversation-1", userId: 7, title: "New conversation", systemPrompt: "Be concise and write TypeScript.", mode: "solo" as const, selectedModels: "[]" };
 
@@ -33,7 +33,7 @@ describe("chat execution service", () => {
       { role: "user", content: "Hello", status: "completed" },
       { role: "assistant", content: "Provider failed", status: "failed" },
       { role: "assistant", content: "Hi", status: "completed" },
-    ])).toEqual([
+    ], false)).toEqual([
       { role: "system", content: "Act as a debugger" },
       { role: "user", content: "Hello" },
       { role: "assistant", content: "Hi" },
@@ -42,20 +42,36 @@ describe("chat execution service", () => {
 
   it("bounds old conversation history while preserving the most recent completed turn", () => {
     const turns = Array.from({ length: 16 }, (_, index) => ({ role: index % 2 ? "assistant" : "user", content: `turn-${index}`, status: "completed" }));
-    const providerMessages = buildProviderMessages(null, turns);
+    const providerMessages = buildProviderMessages(null, turns, false);
     expect(providerMessages).toHaveLength(12);
     expect(providerMessages[0]?.content).toBe("turn-4");
     expect(providerMessages.at(-1)?.content).toBe("turn-15");
   });
 
+  it("adds the explicit fast-response policy after the saved orchestration prompt", () => {
+    const providerMessages = buildProviderMessages("Use a friendly tone.", [{ role: "user", content: "Explain this", status: "completed" }]);
+    expect(providerMessages[0]).toEqual({ role: "system", content: "Use a friendly tone." });
+    expect(providerMessages[1]?.content).toContain("Fast response profile is active");
+  });
+
+  it("compiles an oversized saved prompt into a deterministic compact fast-execution policy", () => {
+    const longPrompt = `${"A".repeat(5_000)}${"B".repeat(3_000)}`;
+    const compiled = compileExecutionPolicy(longPrompt);
+    expect(compiled).toContain("Fast execution policy");
+    expect(compiled?.length).toBeLessThan(longPrompt.length);
+    expect(compiled?.startsWith("A")).toBe(true);
+    expect(compiled?.endsWith("B".repeat(1_000))).toBe(true);
+  });
+
   it("persists the genuine model response with provider metadata", async () => {
     provider.invokeConfiguredModel.mockResolvedValue({ output: "function sum(a,b){ return a+b; }", usage: { totalTokens: 22 } });
     await sendChatMessage({ userId: 7, conversationId: conversation.id, content: "Write a function", mode: "solo", selections: [{ providerId: "openrouter", modelId: "qwen/test" }] });
-    expect(provider.invokeConfiguredModel).toHaveBeenCalledWith(expect.objectContaining({ userId: 7, providerId: "openrouter", modelId: "qwen/test", messages: [
+    expect(provider.invokeConfiguredModel).toHaveBeenCalledWith(expect.objectContaining({ userId: 7, providerId: "openrouter", modelId: "openrouter/free", messages: expect.arrayContaining([
       { role: "system", content: "Be concise and write TypeScript." },
+      { role: "system", content: expect.stringContaining("Fast response profile is active") },
       { role: "user", content: "Write a function" },
-    ] }));
-    expect(db.appendConversationMessage).toHaveBeenLastCalledWith(expect.objectContaining({ role: "assistant", status: "completed", providerId: "openrouter", modelId: "qwen/test", totalTokens: 22 }));
+    ]) }));
+    expect(db.appendConversationMessage).toHaveBeenLastCalledWith(expect.objectContaining({ role: "assistant", status: "completed", providerId: "openrouter", modelId: "openrouter/free", totalTokens: 22 }));
   });
 
   it("applies the saved orchestration policy to every model in a comparison request", async () => {

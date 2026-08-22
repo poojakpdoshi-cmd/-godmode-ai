@@ -6,6 +6,8 @@ export type ChatMode = "solo" | "competition";
 export type ProviderMessage = { role: "system" | "user" | "assistant"; content: string };
 const MAX_HISTORY_TURNS = 12;
 const MAX_HISTORY_CHARACTERS = 24_000;
+const FAST_RESPONSE_POLICY = "Fast response profile is active. Give the direct answer first, keep the answer under 160 words unless the user explicitly asks for depth, avoid restating the request, and use concise bullets only when they improve clarity.";
+const FAST_POLICY_CHARACTER_LIMIT = 6_000;
 
 export function validateChatSelections(mode: ChatMode, selections: ChatSelection[]) {
   const unique = selections.filter((selection, index, list) => list.findIndex(candidate => candidate.providerId === selection.providerId && candidate.modelId === selection.modelId) === index);
@@ -14,7 +16,15 @@ export function validateChatSelections(mode: ChatMode, selections: ChatSelection
   return unique;
 }
 
-export function buildProviderMessages(systemPrompt: string | null, messages: Array<{ role: string; content: string; status: string }>): ProviderMessage[] {
+export function compileExecutionPolicy(systemPrompt: string | null, fast = true) {
+  if (!systemPrompt || !fast || systemPrompt.length <= FAST_POLICY_CHARACTER_LIMIT) return systemPrompt;
+  const opening = systemPrompt.slice(0, 4_800);
+  const closing = systemPrompt.slice(-1_000);
+  return `${opening}\n\n[Fast execution policy: the full saved prompt is retained, but this request uses the opening and closing instructions to minimize provider latency.]\n\n${closing}`;
+}
+
+export function buildProviderMessages(systemPrompt: string | null, messages: Array<{ role: string; content: string; status: string }>, fast = true): ProviderMessage[] {
+  const activePolicy = compileExecutionPolicy(systemPrompt, fast);
   const completedTurns = messages.filter(message => message.status === "completed" && (message.role === "user" || message.role === "assistant")).slice(-MAX_HISTORY_TURNS);
   const recentTurns: ProviderMessage[] = [];
   let characters = 0;
@@ -24,7 +34,8 @@ export function buildProviderMessages(systemPrompt: string | null, messages: Arr
     recentTurns.unshift({ role: message.role as "user" | "assistant", content: message.content });
   }
   return [
-    ...(systemPrompt ? [{ role: "system" as const, content: systemPrompt }] : []),
+    ...(activePolicy ? [{ role: "system" as const, content: activePolicy }] : []),
+    ...(fast ? [{ role: "system" as const, content: FAST_RESPONSE_POLICY }] : []),
     ...recentTurns,
   ];
 }
@@ -33,20 +44,22 @@ function titleFromMessage(content: string) {
   return content.replace(/\s+/g, " ").trim().slice(0, 64) || "New conversation";
 }
 
-export async function sendChatMessage(input: { userId: number; conversationId: string; content: string; mode: ChatMode; selections: ChatSelection[] }) {
+export async function sendChatMessage(input: { userId: number; conversationId: string; content: string; mode: ChatMode; selections: ChatSelection[]; fast?: boolean; research?: boolean }) {
   const conversation = await db.getConversationForUser(input.userId, input.conversationId);
   if (!conversation) throw new Error("Conversation not found.");
   const selections = validateChatSelections(input.mode, input.selections);
-  await Promise.all(selections.map(selection => requireCallableModel(input.userId, selection.providerId, selection.modelId)));
+  if (input.research && selections.some(selection => selection.providerId !== "openrouter")) throw new Error("Live web research currently requires OpenRouter routing. Select one or more OpenRouter models, then send again.");
+  const routedSelections = input.fast !== false && input.mode === "solo" && selections[0]?.providerId === "openrouter" ? [{ providerId: "openrouter" as const, modelId: "openrouter/free" }] : selections;
+  await Promise.all(routedSelections.map(selection => requireCallableModel(input.userId, selection.providerId, selection.modelId)));
   await db.updateConversationConfiguration({ userId: input.userId, conversationId: conversation.id, mode: input.mode, selectedModels: JSON.stringify(selections) });
   const userMessage = await db.appendConversationMessage({ userId: input.userId, conversationId: conversation.id, role: "user", content: input.content.trim() });
   if (conversation.title === "New conversation") await db.updateConversationTitle(input.userId, conversation.id, titleFromMessage(input.content));
   const history = await db.listConversationMessages(input.userId, conversation.id);
-  const providerMessages = buildProviderMessages(conversation.systemPrompt, history);
-  await Promise.all(selections.map(async selection => {
+  const providerMessages = buildProviderMessages(conversation.systemPrompt, history, input.fast !== false);
+  await Promise.all(routedSelections.map(async selection => {
     const startedAt = Date.now();
     try {
-      const result = await invokeConfiguredModel({ userId: input.userId, providerId: selection.providerId, modelId: selection.modelId, messages: providerMessages });
+      const result = await invokeConfiguredModel({ userId: input.userId, providerId: selection.providerId, modelId: selection.modelId, messages: providerMessages, research: input.research });
       await db.appendConversationMessage({ userId: input.userId, conversationId: conversation.id, replyToMessageId: userMessage.id, role: "assistant", content: result.output || "The provider returned an empty response.", providerId: selection.providerId, modelId: selection.modelId, status: "completed", latencyMs: Date.now() - startedAt, ...result.usage });
     } catch (error) {
       const message = error instanceof Error ? error.message.slice(0, 1_500) : "Unknown provider error";

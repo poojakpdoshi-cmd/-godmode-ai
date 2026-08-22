@@ -40,3 +40,9 @@
 - [x] Reduce app-side chat latency through bounded context, output controls, fast routing defaults, and reliable retry behavior.
 - [x] Add latency and transient-fetch failure tests for bounded history and retryable provider diagnostics.
 - [ ] Verify the optimized request path against a live user-configured provider and compare the recorded latency with the prior execution.
+- [x] Add a fast-response profile that constrains reply length and avoids unconstrained long outputs for ordinary chat.
+- [x] Add a real web-search and source-read workflow so current-information requests execute research instead of merely claiming to search.
+- [x] Add visible truthful research and response-progress states, including citations and source links for actual web research.
+- [ ] Test normal chat latency and live web-research behavior with a configured provider, then compare execution timings and accuracy.
+- [x] Compile oversized saved system prompts into a compact, deterministic execution policy for fast requests while retaining the full user-authored prompt in storage.
+- [x] Route ordinary fast-mode free chats through OpenRouter’s Free Models Router unless the user explicitly opts into a different model.

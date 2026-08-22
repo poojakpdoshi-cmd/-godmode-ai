@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CallableModel, describeProviderRequestFailure, describeProviderTransportFailure, isVerifiedFreeOpenRouterModel, ProviderDiagnostic, retainCallableModels } from "./providerRegistry";
+import { buildProviderCompletionPayload, CallableModel, describeProviderRequestFailure, describeProviderTransportFailure, isVerifiedFreeOpenRouterModel, ProviderDiagnostic, retainCallableModels } from "./providerRegistry";
 
 const models: CallableModel[] = [
   { key: "platform:callable", providerId: "platform", providerName: "Platform catalog", modelId: "callable", displayName: "Callable", supportsTools: false, supportsVision: false, inputTypes: ["text"] },
@@ -34,5 +34,13 @@ describe("configured model registry", () => {
     expect(diagnostic).toContain("could not be reached");
     expect(diagnostic).toContain("No response was generated");
     expect(diagnostic).not.toContain("TypeError");
+  });
+
+  it("uses the native web search tool only when research mode is requested", () => {
+    const standard = buildProviderCompletionPayload({ providerId: "openrouter", modelId: "openrouter/free", messages: [{ role: "user", content: "hello" }] });
+    const research = buildProviderCompletionPayload({ providerId: "openrouter", modelId: "openrouter/free", messages: [{ role: "user", content: "latest news" }], research: true });
+    expect(standard.max_completion_tokens).toBe(360);
+    expect(standard).not.toHaveProperty("tools");
+    expect(research).toMatchObject({ provider: { sort: "latency" }, tools: [{ type: "openrouter:web_search", parameters: { engine: "native", max_results: 3 } }] });
   });
 });

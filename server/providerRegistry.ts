@@ -44,6 +44,19 @@ export function describeProviderTransportFailure(providerName: string, error: un
   return `${providerName} could not be reached for this request. No response was generated. Check the connection and retry the same model.${detail && detail !== "fetch failed" ? ` Detail: ${detail}` : ""}`;
 }
 
+export function buildProviderCompletionPayload(input: { providerId: ProviderId; modelId: string; messages: ProviderMessage[]; research?: boolean }) {
+  return {
+    model: input.modelId,
+    messages: input.messages,
+    max_completion_tokens: FAST_COMPLETION_TOKEN_LIMIT,
+    max_tokens: FAST_COMPLETION_TOKEN_LIMIT,
+    ...(input.providerId === "openrouter" ? {
+      provider: { sort: "latency", allow_fallbacks: true },
+      ...(input.research ? { tools: [{ type: "openrouter:web_search", parameters: { engine: "native", max_results: 3, search_context_size: "low" } }] } : {}),
+    } : {}),
+  };
+}
+
 export function retainCallableModels(models: CallableModel[], diagnostics: ProviderDiagnostic[]) {
   const healthy = new Set(diagnostics.filter(diagnostic => diagnostic.configured && diagnostic.healthy).map(diagnostic => diagnostic.providerId));
   return models.filter(model => healthy.has(model.providerId));
@@ -132,7 +145,7 @@ export async function requireCallableModel(userId: number, providerId: ProviderI
   return model;
 }
 
-export async function invokeConfiguredModel(input: { userId: number; providerId: ProviderId; modelId: string; messages: ProviderMessage[] }): Promise<CompletionResult> {
+export async function invokeConfiguredModel(input: { userId: number; providerId: ProviderId; modelId: string; messages: ProviderMessage[]; research?: boolean }): Promise<CompletionResult> {
   await requireCallableModel(input.userId, input.providerId, input.modelId);
   if (input.providerId === "platform") {
     const result = await invokeLLM({ model: input.modelId, messages: input.messages });
@@ -148,13 +161,7 @@ export async function invokeConfiguredModel(input: { userId: number; providerId:
       method: "POST",
       signal: controller.signal,
       headers: { authorization: `Bearer ${decryptProviderKey(configuration.credentialEncrypted)}`, "content-type": "application/json", ...(input.providerId === "openrouter" ? { "x-openrouter-title": "GODMODE AI" } : {}) },
-      body: JSON.stringify({
-        model: input.modelId,
-        messages: input.messages,
-        max_completion_tokens: FAST_COMPLETION_TOKEN_LIMIT,
-        max_tokens: FAST_COMPLETION_TOKEN_LIMIT,
-        ...(input.providerId === "openrouter" ? { provider: { sort: "latency", allow_fallbacks: true } } : {}),
-      }),
+      body: JSON.stringify(buildProviderCompletionPayload(input)),
     });
   } catch (error) {
     throw new Error(describeProviderTransportFailure(PROVIDERS[input.providerId].name, error));
@@ -163,6 +170,9 @@ export async function invokeConfiguredModel(input: { userId: number; providerId:
   }
   const bodyText = await response.text();
   if (!response.ok) throw new Error(describeProviderRequestFailure(PROVIDERS[input.providerId].name, response.status, bodyText));
-  const body = JSON.parse(bodyText) as { choices?: Array<{ message?: { content?: unknown } }>; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } };
-  return { output: textContent(body.choices?.[0]?.message?.content), usage: body.usage ? { promptTokens: body.usage.prompt_tokens, completionTokens: body.usage.completion_tokens, totalTokens: body.usage.total_tokens } : undefined };
+  const body = JSON.parse(bodyText) as { choices?: Array<{ message?: { content?: unknown; annotations?: Array<{ type?: string; url_citation?: { url?: string; title?: string } }> } }>; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } };
+  const content = textContent(body.choices?.[0]?.message?.content);
+  const citations = (body.choices?.[0]?.message?.annotations ?? []).filter(annotation => annotation.type === "url_citation" && annotation.url_citation?.url).map(annotation => annotation.url_citation!);
+  const sourceAppendix = citations.length ? `\n\nSources:\n${citations.map((citation, index) => `- [${citation.title || `Source ${index + 1}`}](${citation.url})`).join("\n")}` : "";
+  return { output: `${content}${sourceAppendix}`, usage: body.usage ? { promptTokens: body.usage.prompt_tokens, completionTokens: body.usage.completion_tokens, totalTokens: body.usage.total_tokens } : undefined };
 }

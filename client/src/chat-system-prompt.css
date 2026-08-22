@@ -33,3 +33,20 @@
 }
 
 .prompt-length.near-limit { color: #f6cf7c; }
+
+.research-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid rgba(137, 193, 224, .24);
+  background: rgba(6, 16, 24, .48);
+  color: #b7d4df;
+  text-align: left;
+}
+
+.research-toggle span { font: 700 10px "IBM Plex Mono", monospace; }
+.research-toggle small { color: #6f8f9d; font-size: 8px; line-height: 1.35; text-align: right; }
+.research-toggle.active { border-color: rgba(117, 233, 196, .62); background: rgba(74, 214, 175, .12); color: #a9f5d6; }
