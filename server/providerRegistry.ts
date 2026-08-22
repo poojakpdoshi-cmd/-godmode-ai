@@ -20,6 +20,22 @@ function cleanBaseUrl(value: string) { return value.replace(/\/$/, ""); }
 function textContent(content: unknown) { return typeof content === "string" ? content : Array.isArray(content) ? content.map(item => typeof item === "object" && item && "text" in item ? String(item.text ?? "") : "").filter(Boolean).join("\n") : ""; }
 function safeError(error: unknown) { return (error instanceof Error ? error.message : String(error)).replace(/Bearer\s+[^\s]+/gi, "Bearer [redacted]").slice(0, 500); }
 
+export function describeProviderRequestFailure(providerName: string, status: number, bodyText: string) {
+  let upstreamMessage = "";
+  try {
+    const parsed = JSON.parse(bodyText) as { error?: { message?: unknown } | unknown; message?: unknown };
+    const nested = parsed.error && typeof parsed.error === "object" && "message" in parsed.error ? parsed.error.message : undefined;
+    upstreamMessage = typeof nested === "string" ? nested : typeof parsed.message === "string" ? parsed.message : "";
+  } catch {
+    upstreamMessage = bodyText;
+  }
+  if (status === 402) return `${providerName} could not run this model because the connected account has insufficient API credits. Add credits or choose a model available to that account, then retry this exact model.`;
+  if (status === 401 || status === 403) return `${providerName} rejected this request because the connected API key is not authorized for the selected model. Reconnect the correct key or choose an allowed model.`;
+  if (status === 429) return `${providerName} is rate-limiting this account. Wait briefly, then retry this exact model.`;
+  const detail = upstreamMessage.replace(/Bearer\s+[^\s]+/gi, "Bearer [redacted]").replace(/\s+/g, " ").trim().slice(0, 280);
+  return detail ? `${providerName} request failed (HTTP ${status}): ${detail}` : `${providerName} request failed with HTTP ${status}.`;
+}
+
 export function retainCallableModels(models: CallableModel[], diagnostics: ProviderDiagnostic[]) {
   const healthy = new Set(diagnostics.filter(diagnostic => diagnostic.configured && diagnostic.healthy).map(diagnostic => diagnostic.providerId));
   return models.filter(model => healthy.has(model.providerId));
@@ -92,7 +108,7 @@ export async function invokeConfiguredModel(input: { userId: number; providerId:
   if (!configuration?.credentialEncrypted || configuration.isEnabled !== "yes") throw new Error(`${PROVIDERS[input.providerId].name} is not connected for this user.`);
   const response = await fetch(`${cleanBaseUrl(PROVIDERS[input.providerId].baseUrl)}/chat/completions`, { method: "POST", headers: { authorization: `Bearer ${decryptProviderKey(configuration.credentialEncrypted)}`, "content-type": "application/json", ...(input.providerId === "openrouter" ? { "x-openrouter-title": "GODMODE AI" } : {}) }, body: JSON.stringify({ model: input.modelId, messages: input.messages }) });
   const bodyText = await response.text();
-  if (!response.ok) throw new Error(`${PROVIDERS[input.providerId].name} request failed with HTTP ${response.status}: ${bodyText.slice(0, 500)}`);
+  if (!response.ok) throw new Error(describeProviderRequestFailure(PROVIDERS[input.providerId].name, response.status, bodyText));
   const body = JSON.parse(bodyText) as { choices?: Array<{ message?: { content?: unknown } }>; usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } };
   return { output: textContent(body.choices?.[0]?.message?.content), usage: body.usage ? { promptTokens: body.usage.prompt_tokens, completionTokens: body.usage.completion_tokens, totalTokens: body.usage.total_tokens } : undefined };
 }
