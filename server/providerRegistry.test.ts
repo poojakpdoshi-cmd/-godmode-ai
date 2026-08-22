@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CallableModel, describeProviderRequestFailure, ProviderDiagnostic, retainCallableModels } from "./providerRegistry";
+import { CallableModel, describeProviderRequestFailure, isVerifiedFreeOpenRouterModel, ProviderDiagnostic, retainCallableModels } from "./providerRegistry";
 
 const models: CallableModel[] = [
   { key: "platform:callable", providerId: "platform", providerName: "Platform catalog", modelId: "callable", displayName: "Callable", supportsTools: false, supportsVision: false, inputTypes: ["text"] },
@@ -21,5 +21,11 @@ describe("configured model registry", () => {
     expect(diagnostic).toContain("Add credits");
     expect(diagnostic).not.toContain("metadata");
     expect(diagnostic).not.toContain("{");
+  });
+
+  it("includes only OpenRouter models whose billable usage dimensions are all zero", () => {
+    expect(isVerifiedFreeOpenRouterModel({ id: "free-model", pricing: { prompt: "0", completion: "0", request: "0" } })).toBe(true);
+    expect(isVerifiedFreeOpenRouterModel({ id: "paid-model", pricing: { prompt: "0", completion: "0.000001" } })).toBe(false);
+    expect(isVerifiedFreeOpenRouterModel({ id: "unknown-price-model" })).toBe(false);
   });
 });

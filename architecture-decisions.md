@@ -13,6 +13,8 @@ The OpenRouter provider contract follows the current documented `GET /api/v1/mod
 
 The uploaded G0DM0D3 archive is a separate Next.js/API project with chat, model selection, settings, and OpenRouter-related modules. GODMODE will take only high-level functional inspiration from it; it will retain its own data model, server contracts, interface composition, and visual system. The optional Respan gateway is documented as an OpenAI-compatible provider using `https://api.respan.ai/api/` with a Respan API key; its exact catalog-discovery behavior will be verified with a supplied key before models are shown.[3]
 
+GODMODE’s OpenRouter chat catalog operates under a free-only policy. A model is eligible only when every applicable OpenRouter catalog price field is zero; any paid usage component excludes the model. The catalog also includes the documented `openrouter/free` router, which selects an available free model at request time. Free-model availability and rate limits can change upstream, so the application discovers the catalog live rather than maintaining a hard-coded list.[4] [5]
+
 ## References
 
 [1] [OpenRouter — List all models and their properties](https://openrouter.ai/docs/api/api-reference/models/list-all-models-and-their-properties)
@@ -20,3 +22,7 @@ The uploaded G0DM0D3 archive is a separate Next.js/API project with chat, model 
 [2] [OpenRouter — API reference](https://openrouter.ai/docs/api_reference/overview)
 
 [3] [Respan — AI Gateway quickstart](https://www.respan.ai/docs/documentation/features/gateway/gateway-quickstart)
+
+[4] [OpenRouter — Models API and pricing object](https://openrouter.ai/docs/guides/overview/models)
+
+[5] [OpenRouter — Free Models Router](https://openrouter.ai/docs/guides/routing/routers/free-router)

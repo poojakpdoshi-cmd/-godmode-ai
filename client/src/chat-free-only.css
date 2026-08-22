@@ -1,0 +1,13 @@
+.free-only-badge {
+  margin-left: auto;
+  color: #77e4c0;
+  border: 1px solid rgba(119, 228, 192, .32);
+  padding: 3px 4px;
+  font: 700 7px "IBM Plex Mono", monospace;
+  letter-spacing: .06em;
+}
+
+.free-policy {
+  margin: -3px 0 10px;
+  color: #80a49e;
+}

@@ -27,3 +27,5 @@
 - [x] Verify the revised chatbot UI and core server flows before delivery.
 - [x] Inspect the uploaded G0DM0D3 project for useful functional ideas while retaining an original GODMODE codebase, user flow, and visual design.
 - [x] Convert raw provider error bodies into concise, actionable chat diagnostics without hiding the actual failure category.
+- [x] Filter the OpenRouter registry and chat routing to genuinely free models only, with paid models excluded from selection.
+- [x] Add clear free-only model labels and automated tests for pricing-based model exclusion.
