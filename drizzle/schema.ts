@@ -1,17 +1,16 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import {
+  index,
+  int,
+  mysqlEnum,
+  mysqlTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  varchar,
+} from "drizzle-orm/mysql-core";
 
-/**
- * Core user table backing auth flow.
- * Extend this file with additional tables as your product grows.
- * Columns use camelCase to match both database fields and generated types.
- */
 export const users = mysqlTable("users", {
-  /**
-   * Surrogate primary key. Auto-incremented numeric value managed by the database.
-   * Use this for relations between tables.
-   */
   id: int("id").autoincrement().primaryKey(),
-  /** Manus OAuth identifier (openId) returned from the OAuth callback. Unique per user. */
   openId: varchar("openId", { length: 64 }).notNull().unique(),
   name: text("name"),
   email: varchar("email", { length: 320 }),
@@ -22,7 +21,124 @@ export const users = mysqlTable("users", {
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
 });
 
+export const projects = mysqlTable(
+  "projects",
+  {
+    id: varchar("id", { length: 36 }).primaryKey(),
+    userId: int("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 180 }).notNull(),
+    description: text("description"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [index("projects_user_created_idx").on(table.userId, table.createdAt)]
+);
+
+export const missions = mysqlTable(
+  "missions",
+  {
+    id: varchar("id", { length: 36 }).primaryKey(),
+    projectId: varchar("projectId", { length: 36 }).notNull().references(() => projects.id, { onDelete: "cascade" }),
+    userId: int("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+    title: varchar("title", { length: 180 }).notNull(),
+    command: text("command").notNull(),
+    systemPrompt: text("systemPrompt"),
+    mode: mysqlEnum("mode", ["solo", "competition"]).notNull(),
+    status: mysqlEnum("status", ["draft", "queued", "running", "completed", "partial", "failed"])
+      .default("draft")
+      .notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [
+    index("missions_user_created_idx").on(table.userId, table.createdAt),
+    index("missions_project_created_idx").on(table.projectId, table.createdAt),
+  ]
+);
+
+export const missionMessages = mysqlTable(
+  "missionMessages",
+  {
+    id: varchar("id", { length: 36 }).primaryKey(),
+    missionId: varchar("missionId", { length: 36 }).notNull().references(() => missions.id, { onDelete: "cascade" }),
+    userId: int("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+    role: mysqlEnum("role", ["user", "system", "assistant"]).notNull(),
+    content: text("content").notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [index("mission_messages_mission_created_idx").on(table.missionId, table.createdAt)]
+);
+
+export const executionRuns = mysqlTable(
+  "executionRuns",
+  {
+    id: varchar("id", { length: 36 }).primaryKey(),
+    missionId: varchar("missionId", { length: 36 }).notNull().references(() => missions.id, { onDelete: "cascade" }),
+    projectId: varchar("projectId", { length: 36 }).notNull().references(() => projects.id, { onDelete: "cascade" }),
+    userId: int("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+    providerId: varchar("providerId", { length: 64 }).notNull(),
+    modelId: varchar("modelId", { length: 255 }).notNull(),
+    mode: mysqlEnum("mode", ["solo", "competition"]).notNull(),
+    status: mysqlEnum("status", ["queued", "running", "succeeded", "failed"])
+      .default("queued")
+      .notNull(),
+    output: text("output"),
+    errorCode: varchar("errorCode", { length: 80 }),
+    errorMessage: text("errorMessage"),
+    latencyMs: int("latencyMs"),
+    promptTokens: int("promptTokens"),
+    completionTokens: int("completionTokens"),
+    totalTokens: int("totalTokens"),
+    startedAt: timestamp("startedAt"),
+    completedAt: timestamp("completedAt"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [
+    index("runs_mission_created_idx").on(table.missionId, table.createdAt),
+    index("runs_user_created_idx").on(table.userId, table.createdAt),
+  ]
+);
+
+export const executionEvents = mysqlTable(
+  "executionEvents",
+  {
+    id: varchar("id", { length: 36 }).primaryKey(),
+    missionId: varchar("missionId", { length: 36 }).notNull().references(() => missions.id, { onDelete: "cascade" }),
+    runId: varchar("runId", { length: 36 }).references(() => executionRuns.id, { onDelete: "cascade" }),
+    userId: int("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+    type: varchar("type", { length: 80 }).notNull(),
+    level: mysqlEnum("level", ["info", "success", "warning", "error"]).notNull(),
+    summary: varchar("summary", { length: 300 }).notNull(),
+    detail: text("detail"),
+    metadata: text("metadata"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [
+    index("events_mission_created_idx").on(table.missionId, table.createdAt),
+    index("events_run_created_idx").on(table.runId, table.createdAt),
+  ]
+);
+
+export const providerConfigurations = mysqlTable(
+  "providerConfigurations",
+  {
+    id: varchar("id", { length: 36 }).primaryKey(),
+    userId: int("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+    providerId: varchar("providerId", { length: 64 }).notNull(),
+    displayName: varchar("displayName", { length: 120 }).notNull(),
+    credentialSource: mysqlEnum("credentialSource", ["platform", "environment"]).notNull(),
+    isEnabled: mysqlEnum("isEnabled", ["yes", "no"]).default("yes").notNull(),
+    lastCheckedAt: timestamp("lastCheckedAt"),
+    lastError: text("lastError"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  table => [uniqueIndex("provider_configs_user_provider_uq").on(table.userId, table.providerId)]
+);
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
-
-// TODO: Add your tables here
+export type Project = typeof projects.$inferSelect;
+export type Mission = typeof missions.$inferSelect;
+export type ExecutionRun = typeof executionRuns.$inferSelect;
+export type ExecutionEvent = typeof executionEvents.$inferSelect;
