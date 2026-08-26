@@ -76,3 +76,5 @@
 - [ ] Assess and prepare an Android APK delivery path for the existing full-stack GODMODE application without exposing provider credentials.
 - [ ] Create a private GitHub repository and push the verified GODMODE AI source.
 - [ ] Add and test a local-run npm CLI that starts GODMODE safely in the user’s browser with documented environment setup.
+- [ ] Resolve the current GitHub repository-creation permission blocker or receive a user-created private repository URL for the push.
+- [ ] Perform a public-release secret scan, then create and push the user-approved public GitHub repository.
