@@ -12,7 +12,7 @@ import { sdk } from "./sdk";
 import { ENV } from "./env";
 import { getOrCreateLocalUser } from "../db";
 import { prepareStreamedChat, persistStreamedAssistantMessage, persistStreamedFailure } from "../chatService";
-import { getFastFreeCandidates, getRespanFallbackModel, shouldUseRespanFallback, streamConfiguredModel } from "../providerRegistry";
+import { canUseRespanFallback, getFastFreeCandidates, getRespanFallbackModel, streamConfiguredModel } from "../providerRegistry";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -66,7 +66,7 @@ async function startServer() {
         for (let index = 0; index < candidates.length; index += 1) {
           const candidate = candidates[index];
           let emitted = false;
-          write("meta", { modelId: candidate.modelId, attempt: index + 1, candidateCount: candidates.length });
+          write("meta", { providerId: "openrouter", modelId: candidate.modelId, attempt: index + 1, candidateCount: candidates.length });
           startedAt = Date.now();
           try {
             result = await streamConfiguredModel({ userId: user.id, providerId: "openrouter", modelId: candidate.modelId, messages: plan.messages }, (chunk: string) => {
@@ -84,12 +84,12 @@ async function startServer() {
       } catch (error) {
         lastError = error instanceof Error ? error : new Error("Free model attempt failed.");
       }
-      if (!result && lastError && shouldUseRespanFallback(lastError)) {
+      if (!result && lastError && canUseRespanFallback(plan.respanFallbackEnabled, lastError)) {
         const fallback = await getRespanFallbackModel(user.id);
         firstTokenMs = null;
         startedAt = Date.now();
         write("status", { message: `OpenRouter is unavailable (${lastError.message}); switching to your connected Respan fallback.` });
-        write("meta", { modelId: fallback.modelId, attempt: 1, candidateCount: 1 });
+        write("meta", { providerId: "respan", modelId: fallback.modelId, attempt: 1, candidateCount: 1 });
         result = await streamConfiguredModel({ userId: user.id, providerId: "respan", modelId: fallback.modelId, messages: plan.messages }, (chunk: string) => {
           if (firstTokenMs === null) { firstTokenMs = Date.now() - startedAt; write("first-token", { firstTokenMs }); }
           write("delta", { chunk });

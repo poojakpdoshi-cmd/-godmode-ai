@@ -240,7 +240,7 @@ export async function disableProviderConfiguration(userId: number, providerId: s
   await db.update(providerConfigurations).set({ isEnabled: "no", credentialEncrypted: null, lastError: null, lastCheckedAt: new Date() }).where(and(eq(providerConfigurations.userId, userId), eq(providerConfigurations.providerId, providerId)));
 }
 
-export async function createConversation(input: { userId: number; title?: string; systemPrompt?: string; mode?: "solo" | "competition"; selectedModels?: string }) {
+export async function createConversation(input: { userId: number; title?: string; systemPrompt?: string; mode?: "solo" | "competition"; selectedModels?: string; respanFallback?: boolean }) {
   const db = await getDb();
   if (!db) throw new Error("Database is unavailable");
   const conversation = {
@@ -250,6 +250,7 @@ export async function createConversation(input: { userId: number; title?: string
     systemPrompt: input.systemPrompt?.trim() || null,
     mode: input.mode ?? "solo",
     selectedModels: input.selectedModels ?? "[]",
+    respanFallback: input.respanFallback ? "yes" as const : "no" as const,
   };
   await db.insert(conversations).values(conversation);
   return conversation;
@@ -267,14 +268,15 @@ export async function getConversationForUser(userId: number, conversationId: str
   return (await db.select().from(conversations).where(and(eq(conversations.id, conversationId), eq(conversations.userId, userId))).limit(1))[0];
 }
 
-export async function updateConversationConfiguration(input: { userId: number; conversationId: string; systemPrompt?: string | null; mode?: "solo" | "competition"; selectedModels?: string; title?: string }) {
+export async function updateConversationConfiguration(input: { userId: number; conversationId: string; systemPrompt?: string | null; mode?: "solo" | "competition"; selectedModels?: string; title?: string; respanFallback?: boolean }) {
   const db = await getDb();
   if (!db) throw new Error("Database is unavailable");
-  const values: { systemPrompt?: string | null; mode?: "solo" | "competition"; selectedModels?: string; title?: string } = {};
+  const values: { systemPrompt?: string | null; mode?: "solo" | "competition"; selectedModels?: string; title?: string; respanFallback?: "yes" | "no" } = {};
   if (input.systemPrompt !== undefined) values.systemPrompt = input.systemPrompt;
   if (input.mode !== undefined) values.mode = input.mode;
   if (input.selectedModels !== undefined) values.selectedModels = input.selectedModels;
   if (input.title !== undefined) values.title = input.title;
+  if (input.respanFallback !== undefined) values.respanFallback = input.respanFallback ? "yes" : "no";
   if (Object.keys(values).length) {
     await db.update(conversations).set(values).where(and(eq(conversations.id, input.conversationId), eq(conversations.userId, input.userId)));
   }

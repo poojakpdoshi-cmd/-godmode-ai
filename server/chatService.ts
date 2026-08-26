@@ -79,7 +79,7 @@ export async function prepareStreamedChat(input: { userId: number; conversationI
   const userMessage = await db.appendConversationMessage({ userId: input.userId, conversationId: conversation.id, role: "user", content: input.content.trim() });
   if (conversation.title === "New conversation") await db.updateConversationTitle(input.userId, conversation.id, titleFromMessage(input.content));
   const history = await db.listConversationMessages(input.userId, conversation.id);
-  return { conversationId: conversation.id, userMessageId: userMessage.id, selection, messages: buildProviderMessages(conversation.systemPrompt, history, true) };
+  return { conversationId: conversation.id, userMessageId: userMessage.id, selection, respanFallbackEnabled: conversation.respanFallback === "yes", messages: buildProviderMessages(conversation.systemPrompt, history, true) };
 }
 
 export async function persistStreamedAssistantMessage(input: { userId: number; conversationId: string; userMessageId: string; selection: ChatSelection; output: string; firstTokenMs: number | null; latencyMs: number; usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number } }) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildProviderCompletionPayload, CallableModel, describeProviderRequestFailure, describeProviderTransportFailure, isTextChatCapableModel, isVerifiedFreeOpenRouterModel, MODEL_REGISTRY_TTL_MS, prioritizeDefaultFastestModels, prioritizeFastFreeModels, ProviderDiagnostic, retainCallableModels, selectManagedFastModels, shouldUseRespanFallback } from "./providerRegistry";
+import { buildProviderCompletionPayload, canUseRespanFallback, CallableModel, describeProviderRequestFailure, describeProviderTransportFailure, isTextChatCapableModel, isVerifiedFreeOpenRouterModel, MODEL_REGISTRY_TTL_MS, prioritizeDefaultFastestModels, prioritizeFastFreeModels, ProviderDiagnostic, retainCallableModels, selectManagedFastModels, shouldUseRespanFallback } from "./providerRegistry";
 
 const models: CallableModel[] = [
   { key: "platform:callable", providerId: "platform", providerName: "Platform catalog", modelId: "callable", displayName: "Callable", supportsTools: false, supportsVision: false, inputTypes: ["text"] },
@@ -92,5 +92,11 @@ describe("configured model registry", () => {
     expect(shouldUseRespanFallback(new Error("OpenRouter could not run this model because the connected account has insufficient API credits."))).toBe(true);
     expect(shouldUseRespanFallback(new Error("OpenRouter did not produce first text within 2.75s."))).toBe(true);
     expect(shouldUseRespanFallback(new Error("The user asked for a longer answer."))).toBe(false);
+  });
+
+  it("requires saved streaming consent before an eligible OpenRouter failure can switch to Respan", () => {
+    const rateLimit = new Error("OpenRouter is rate-limiting this account.");
+    expect(canUseRespanFallback(false, rateLimit)).toBe(false);
+    expect(canUseRespanFallback(true, rateLimit)).toBe(true);
   });
 });

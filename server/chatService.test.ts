@@ -16,7 +16,7 @@ vi.mock("./providerRegistry", () => provider);
 
 import { buildProviderMessages, compileExecutionPolicy, persistStreamedAssistantMessage, prepareStreamedChat, retryChatMessage, sendChatMessage } from "./chatService";
 
-const conversation = { id: "conversation-1", userId: 7, title: "New conversation", systemPrompt: "Be concise and write TypeScript.", mode: "solo" as const, selectedModels: "[]" };
+const conversation = { id: "conversation-1", userId: 7, title: "New conversation", systemPrompt: "Be concise and write TypeScript.", mode: "solo" as const, selectedModels: "[]", respanFallback: "no" as const };
 
 describe("chat execution service", () => {
   beforeEach(() => {
@@ -68,8 +68,15 @@ describe("chat execution service", () => {
   it("prepares a user-scoped streamed request through the free router while keeping the saved selection", async () => {
     const plan = await prepareStreamedChat({ userId: 7, conversationId: conversation.id, content: "Stream hello", selection: { providerId: "openrouter", modelId: "cohere/north-mini-code:free" } });
     expect(plan.selection).toEqual({ providerId: "openrouter", modelId: "openrouter/free" });
+    expect(plan.respanFallbackEnabled).toBe(false);
     expect(db.updateConversationConfiguration).toHaveBeenCalledWith(expect.objectContaining({ userId: 7, conversationId: conversation.id, selectedModels: JSON.stringify([{ providerId: "openrouter", modelId: "cohere/north-mini-code:free" }]) }));
     expect(provider.requireCallableModel).not.toHaveBeenCalled();
+  });
+
+  it("carries only an explicitly saved Respan fallback preference into fast streaming", async () => {
+    db.getConversationForUser.mockResolvedValueOnce({ ...conversation, respanFallback: "yes" });
+    const plan = await prepareStreamedChat({ userId: 7, conversationId: conversation.id, content: "Stream hello", selection: { providerId: "openrouter", modelId: "cohere/north-mini-code:free" } });
+    expect(plan.respanFallbackEnabled).toBe(true);
   });
 
   it("persists first-token time separately from total streamed completion time", async () => {
@@ -86,6 +93,19 @@ describe("chat execution service", () => {
       { role: "user", content: "Write a function" },
     ]) }));
     expect(db.appendConversationMessage).toHaveBeenLastCalledWith(expect.objectContaining({ role: "assistant", status: "completed", providerId: "openrouter", modelId: "openrouter/free", totalTokens: 22 }));
+  });
+
+  it("never auto-routes direct or research chat to Respan even when a conversation has fallback consent", async () => {
+    db.appendConversationMessage.mockResolvedValue({ id: "user-message-1" });
+    db.getConversationForUser.mockResolvedValueOnce({ ...conversation, respanFallback: "yes" });
+    provider.invokeConfiguredModel.mockResolvedValue({ output: "Direct result", usage: { totalTokens: 7 } });
+    await sendChatMessage({ userId: 7, conversationId: conversation.id, content: "Direct request", mode: "solo", selections: [{ providerId: "openrouter", modelId: "cohere/north-mini-code:free" }] });
+    expect(provider.invokeConfiguredModel).toHaveBeenLastCalledWith(expect.objectContaining({ providerId: "openrouter", modelId: "openrouter/free", research: undefined }));
+
+    db.getConversationForUser.mockResolvedValueOnce({ ...conversation, respanFallback: "yes" });
+    await sendChatMessage({ userId: 7, conversationId: conversation.id, content: "Research request", mode: "solo", selections: [{ providerId: "openrouter", modelId: "cohere/north-mini-code:free" }], research: true });
+    expect(provider.invokeConfiguredModel).toHaveBeenLastCalledWith(expect.objectContaining({ providerId: "openrouter", research: true }));
+    expect(provider.invokeConfiguredModel.mock.calls.flat().some((value: unknown) => typeof value === "object" && value !== null && (value as { providerId?: string }).providerId === "respan")).toBe(false);
   });
 
   it("applies the saved orchestration policy to every model in a comparison request", async () => {

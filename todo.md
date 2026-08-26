@@ -72,12 +72,15 @@
 - [x] Prove the ranked default fastest selection and route behavior end to end rather than only through manual model selection.
 - [ ] Diagnose and fix the newly reported non-working fast-route or preview behavior from current runtime evidence.
 - [x] Clarify whether the user wants a compliant OpenRouter-plus-Respan fallback workflow rather than key rotation to bypass provider limits.
-- [ ] Implement an explicit user-authorized OpenRouter-to-Respan fallback for rate-limit, access, and availability failures with truthful provider attribution.
+- [x] Implement an explicit user-authorized OpenRouter-to-Respan fallback for rate-limit, access, and availability failures with truthful provider attribution.
+- [ ] Live-verify the automatic Respan fallback after the user connects a Respan key in the app.
+- [x] Add an explicit streaming fallback consent control and reflect the active fallback provider/model immediately in the live chat UI.
+- [x] Document and test that fallback applies only to authorized OpenRouter fast streaming, not research or other direct routes.
 - [ ] Assess and prepare an Android APK delivery path for the existing full-stack GODMODE application without exposing provider credentials.
-- [ ] Create a private GitHub repository and push the verified GODMODE AI source.
-- [ ] Add and test a local-run npm CLI that starts GODMODE safely in the user’s browser with documented environment setup.
-- [ ] Resolve the current GitHub repository-creation permission blocker or receive a user-created private repository URL for the push.
-- [ ] Perform a public-release secret scan, then create and push the user-approved public GitHub repository.
-- [ ] Resolve the confirmed GitHub write-permission denial for the user-created public repository before pushing commits.
-- [ ] Obtain a one-time user-authorized GitHub write credential or browser session to complete the public push.
-- [ ] Securely collect the scoped GitHub token, push to the user-created public repository, and remove the temporary credential path.
+- [x] Create and push the verified GODMODE AI source to the user-approved public GitHub repository.
+- [x] Add and test a local-run npm CLI that starts GODMODE safely in the user’s browser with documented environment setup.
+- [x] Work around the GitHub repository-creation permission blocker by pushing to the user-created public repository URL.
+- [x] Perform a public-release secret scan and push the source to the user-created public GitHub repository after GitHub creation permissions were unavailable to the connected token.
+- [x] Resolve the confirmed GitHub write-permission denial for the user-created public repository before pushing commits.
+- [x] Obtain a one-time user-authorized GitHub write credential or browser session to complete the public push.
+- [ ] Revoke the one-time GitHub token from the GitHub settings page now that the public push is complete.

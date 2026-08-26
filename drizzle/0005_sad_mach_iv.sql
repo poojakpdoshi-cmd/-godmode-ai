@@ -1,0 +1,1 @@
+ALTER TABLE `conversations` ADD `respanFallback` enum('yes','no') DEFAULT 'no' NOT NULL;

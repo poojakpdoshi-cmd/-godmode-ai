@@ -146,6 +146,7 @@ export const conversations = mysqlTable(
     systemPrompt: text("systemPrompt"),
     mode: mysqlEnum("mode", ["solo", "competition"]).default("solo").notNull(),
     selectedModels: text("selectedModels").notNull(),
+    respanFallback: mysqlEnum("respanFallback", ["yes", "no"]).default("no").notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),
     updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   },

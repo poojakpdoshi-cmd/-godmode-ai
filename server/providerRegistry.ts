@@ -286,6 +286,10 @@ export function shouldUseRespanFallback(error: unknown) {
   return ["rate-limiting", "insufficient api credits", "not authorized", "free access is not verified", "did not produce first text", "did not start producing text", "all available free models"].some(trigger => message.includes(trigger));
 }
 
+export function canUseRespanFallback(respanFallbackEnabled: boolean, error: unknown) {
+  return respanFallbackEnabled && shouldUseRespanFallback(error);
+}
+
 export function clearModelRegistryCache(userId?: number) {
   if (userId === undefined) { cache.clear(); openRouterEligibilityCache.clear(); }
   else { cache.delete(userId); openRouterEligibilityCache.delete(userId); }
