@@ -6,7 +6,7 @@ export type ChatMode = "solo" | "competition";
 export type ProviderMessage = { role: "system" | "user" | "assistant"; content: string };
 const MAX_HISTORY_TURNS = 12;
 const MAX_HISTORY_CHARACTERS = 24_000;
-const FAST_RESPONSE_POLICY = "Fast response profile is active. Give the direct answer first, keep the answer under 160 words unless the user explicitly asks for depth, avoid restating the request, and use concise bullets only when they improve clarity.";
+const FAST_RESPONSE_POLICY = "Fast response profile is active. Give the direct answer first, keep the answer under 100 words unless the user explicitly asks for depth, avoid restating the request, and use concise bullets only when they improve clarity.";
 const FAST_POLICY_CHARACTER_LIMIT = 800;
 
 export function validateChatSelections(mode: ChatMode, selections: ChatSelection[]) {

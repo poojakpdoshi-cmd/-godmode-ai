@@ -63,3 +63,10 @@
 - [x] Run a real persisted research chat through the user-scoped application flow and verify the saved assistant message contains rendered citation links.
 - [x] Add explicit research timing metadata to the rendered conversation and verify it end to end.
 - [x] Extract explicit clickable research-source and final-only timing components, then verify their rendered output with automated UI tests.
+- [x] Profile real free text-model first-token latency and rework fast routing to avoid slow free-router queue behavior.
+- [x] Compare viable managed fast models against free OpenRouter candidates and expose the fastest route with truthful labeling.
+- [x] Add deterministic managed fastest-route ranking and automated coverage for fast-route selection and warm-cache behavior.
+- [x] Run a real persisted post-fix fast-chat through the app flow and record user-visible timing versus the prior route.
+- [x] Make the measured managed model the clear default fastest route and reduce free fast mode to a single bounded attempt.
+- [x] Prove repeated fast-route lookups reuse the verified registry cache without rediscovery or re-probing inside its TTL.
+- [x] Prove the ranked default fastest selection and route behavior end to end rather than only through manual model selection.

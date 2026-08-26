@@ -16,17 +16,21 @@ const PROVIDERS = {
 } as const;
 const cache = new Map<number, { expiresAt: number; registry: ModelRegistry }>();
 const openRouterEligibilityCache = new Map<number, number>();
+export const MODEL_REGISTRY_TTL_MS = 10 * 60_000;
 const REQUEST_TIMEOUT_MS = 35_000;
-const FAST_COMPLETION_TOKEN_LIMIT = 360;
-const FIRST_TOKEN_TIMEOUT_MS = 4_500;
-const FAST_FREE_MODEL_PREFIXES = ["google/", "qwen/", "meta-llama/", "mistralai/", "cohere/"];
+const FAST_COMPLETION_TOKEN_LIMIT = 180;
+const FAST_ROUTE_FIRST_TEXT_TIMEOUT_MS = 2_750;
+const FAST_FREE_MODEL_IDS = ["cohere/north-mini-code:free", "nvidia/nemotron-3.5-lightning:free", "thinkingmachines/inkling-small:free"];
+const DEPRIORITIZED_FAST_ROUTE_MODEL_IDS = ["liquid/lfm-2.5-2.6b:free"];
+const FAST_FREE_MODEL_PREFIXES = ["cohere/", "nvidia/", "thinkingmachines/", "google/", "qwen/", "meta-llama/", "mistralai/"];
+const MANAGED_FAST_MODEL_IDS = ["claude-haiku-4-5", "gpt-5-mini", "gpt-5-nano"];
 
 function cleanBaseUrl(value: string) { return value.replace(/\/$/, ""); }
 function textContent(content: unknown) { return typeof content === "string" ? content : Array.isArray(content) ? content.map(item => typeof item === "object" && item && "text" in item ? String(item.text ?? "") : "").filter(Boolean).join("\n") : ""; }
 function safeError(error: unknown) { return (error instanceof Error ? error.message : String(error)).replace(/Bearer\s+[^\s]+/gi, "Bearer [redacted]").slice(0, 500); }
 
 export function selectManagedFastModels(catalog: Array<{ id: string }>): CallableModel[] {
-  const preferred = catalog.filter(model => ["gpt-5-nano", "gpt-5-mini", "claude-haiku-4-5"].includes(model.id));
+  const preferred = MANAGED_FAST_MODEL_IDS.flatMap(modelId => catalog.filter(model => model.id === modelId));
   const selected = preferred.length ? preferred.slice(0, 2) : catalog.slice(0, 1);
   return selected.map(model => ({ key: `platform:${model.id}`, providerId: "platform", providerName: "GODMODE Managed Fast", modelId: model.id, displayName: model.id === "gpt-5-nano" ? "Managed Fast" : `Managed · ${model.id}`, supportsTools: false, supportsVision: false, inputTypes: ["text"] }));
 }
@@ -79,11 +83,32 @@ export function buildProviderCompletionPayload(input: { providerId: ProviderId; 
 
 export function prioritizeFastFreeModels(models: CallableModel[]) {
   return [...models].filter(model => model.providerId === "openrouter" && model.modelId !== "openrouter/free").sort((left, right) => {
+    const leftPreferred = FAST_FREE_MODEL_IDS.indexOf(left.modelId);
+    const rightPreferred = FAST_FREE_MODEL_IDS.indexOf(right.modelId);
+    const normalizedLeftPreferred = leftPreferred === -1 ? FAST_FREE_MODEL_IDS.length : leftPreferred;
+    const normalizedRightPreferred = rightPreferred === -1 ? FAST_FREE_MODEL_IDS.length : rightPreferred;
+    if (normalizedLeftPreferred !== normalizedRightPreferred) return normalizedLeftPreferred - normalizedRightPreferred;
+    const leftDeprioritized = DEPRIORITIZED_FAST_ROUTE_MODEL_IDS.includes(left.modelId);
+    const rightDeprioritized = DEPRIORITIZED_FAST_ROUTE_MODEL_IDS.includes(right.modelId);
+    if (leftDeprioritized !== rightDeprioritized) return leftDeprioritized ? 1 : -1;
     const leftRank = FAST_FREE_MODEL_PREFIXES.findIndex(prefix => left.modelId.startsWith(prefix));
     const rightRank = FAST_FREE_MODEL_PREFIXES.findIndex(prefix => right.modelId.startsWith(prefix));
     const normalizedLeft = leftRank === -1 ? FAST_FREE_MODEL_PREFIXES.length : leftRank;
     const normalizedRight = rightRank === -1 ? FAST_FREE_MODEL_PREFIXES.length : rightRank;
     return normalizedLeft - normalizedRight || left.displayName.localeCompare(right.displayName);
+  });
+}
+
+export function prioritizeDefaultFastestModels(models: CallableModel[]) {
+  return [...models].sort((left, right) => {
+    const leftManagedRank = left.providerId === "platform" ? MANAGED_FAST_MODEL_IDS.indexOf(left.modelId) : -1;
+    const rightManagedRank = right.providerId === "platform" ? MANAGED_FAST_MODEL_IDS.indexOf(right.modelId) : -1;
+    const normalizedLeftManagedRank = leftManagedRank === -1 ? MANAGED_FAST_MODEL_IDS.length : leftManagedRank;
+    const normalizedRightManagedRank = rightManagedRank === -1 ? MANAGED_FAST_MODEL_IDS.length : rightManagedRank;
+    if (normalizedLeftManagedRank !== normalizedRightManagedRank) return normalizedLeftManagedRank - normalizedRightManagedRank;
+    if (left.modelId === "openrouter/free") return -1;
+    if (right.modelId === "openrouter/free") return 1;
+    return left.displayName.localeCompare(right.displayName);
   });
 }
 
@@ -94,6 +119,14 @@ export async function streamConfiguredModel(input: { userId: number; providerId:
   if (!configuration?.credentialEncrypted || configuration.isEnabled !== "yes") throw new Error(`${PROVIDERS[input.providerId].name} is not connected for this user.`);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let receivedFirstToken = false;
+  let firstTokenTimedOut = false;
+  const firstTokenTimer = setTimeout(() => {
+    if (!receivedFirstToken) {
+      firstTokenTimedOut = true;
+      controller.abort();
+    }
+  }, FAST_ROUTE_FIRST_TEXT_TIMEOUT_MS);
   let response: Response;
   try {
     response = await fetch(`${cleanBaseUrl(PROVIDERS[input.providerId].baseUrl)}/chat/completions`, {
@@ -103,25 +136,24 @@ export async function streamConfiguredModel(input: { userId: number; providerId:
       body: JSON.stringify({ ...buildProviderCompletionPayload(input), stream: true, stream_options: { include_usage: true } }),
     });
   } catch (error) {
+    clearTimeout(firstTokenTimer);
+    if (firstTokenTimedOut) throw new Error(`${PROVIDERS[input.providerId].name} did not produce first text within ${FAST_ROUTE_FIRST_TEXT_TIMEOUT_MS / 1000}s. Trying another available free model.`);
     throw new Error(describeProviderTransportFailure(PROVIDERS[input.providerId].name, error));
   } finally {
     clearTimeout(timeout);
   }
-  if (!response.ok) throw new Error(describeProviderRequestFailure(PROVIDERS[input.providerId].name, response.status, await response.text()));
-  if (!response.body) throw new Error(`${PROVIDERS[input.providerId].name} opened an empty streaming response.`);
+  if (!response.ok) { clearTimeout(firstTokenTimer); throw new Error(describeProviderRequestFailure(PROVIDERS[input.providerId].name, response.status, await response.text())); }
+  if (!response.body) { clearTimeout(firstTokenTimer); throw new Error(`${PROVIDERS[input.providerId].name} opened an empty streaming response.`); }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let output = "";
   let usage: CompletionResult["usage"];
-  let receivedFirstToken = false;
-  let firstTokenTimedOut = false;
-  const firstTokenTimer = setTimeout(() => { if (!receivedFirstToken) { firstTokenTimedOut = true; controller.abort(); } }, FIRST_TOKEN_TIMEOUT_MS);
   try {
    while (true) {
     let read: ReadableStreamReadResult<Uint8Array>;
     try { read = await reader.read(); } catch (error) {
-      if (firstTokenTimedOut) throw new Error(`${PROVIDERS[input.providerId].name} did not start producing text within ${FIRST_TOKEN_TIMEOUT_MS / 1000}s. Trying another available free model.`);
+      if (firstTokenTimedOut) throw new Error(`${PROVIDERS[input.providerId].name} did not produce first text within ${FAST_ROUTE_FIRST_TEXT_TIMEOUT_MS / 1000}s. Trying another available free model.`);
       throw error;
     }
     const { value, done } = read;
@@ -222,15 +254,11 @@ export async function getModelRegistry(userId: number, options: { force?: boolea
     }
   }
   const registry = {
-    models: retainCallableModels(models, diagnostics).sort((a, b) => {
-      if (a.modelId === "openrouter/free") return -1;
-      if (b.modelId === "openrouter/free") return 1;
-      return a.displayName.localeCompare(b.displayName);
-    }),
+    models: prioritizeDefaultFastestModels(retainCallableModels(models, diagnostics)),
     diagnostics,
     checkedAt,
   };
-  cache.set(userId, { registry, expiresAt: Date.now() + 30_000 });
+  cache.set(userId, { registry, expiresAt: Date.now() + MODEL_REGISTRY_TTL_MS });
   return registry;
 }
 
@@ -244,7 +272,7 @@ export async function assertOpenRouterFreeAccess(userId: number) {
 }
 
 export async function getFastFreeCandidates(userId: number) {
-  return prioritizeFastFreeModels((await assertOpenRouterFreeAccess(userId)).models).slice(0, 4);
+  return prioritizeFastFreeModels((await assertOpenRouterFreeAccess(userId)).models).slice(0, 1);
 }
 
 export function clearModelRegistryCache(userId?: number) {

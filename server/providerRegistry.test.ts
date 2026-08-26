@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildProviderCompletionPayload, CallableModel, describeProviderRequestFailure, describeProviderTransportFailure, isTextChatCapableModel, isVerifiedFreeOpenRouterModel, prioritizeFastFreeModels, ProviderDiagnostic, retainCallableModels, selectManagedFastModels } from "./providerRegistry";
+import { buildProviderCompletionPayload, CallableModel, describeProviderRequestFailure, describeProviderTransportFailure, isTextChatCapableModel, isVerifiedFreeOpenRouterModel, MODEL_REGISTRY_TTL_MS, prioritizeDefaultFastestModels, prioritizeFastFreeModels, ProviderDiagnostic, retainCallableModels, selectManagedFastModels } from "./providerRegistry";
 
 const models: CallableModel[] = [
   { key: "platform:callable", providerId: "platform", providerName: "Platform catalog", modelId: "callable", displayName: "Callable", supportsTools: false, supportsVision: false, inputTypes: ["text"] },
@@ -45,7 +45,7 @@ describe("configured model registry", () => {
   it("uses the native web search tool only when research mode is requested", () => {
     const standard = buildProviderCompletionPayload({ providerId: "openrouter", modelId: "openrouter/free", messages: [{ role: "user", content: "hello" }] });
     const research = buildProviderCompletionPayload({ providerId: "openrouter", modelId: "openrouter/free", messages: [{ role: "user", content: "latest news" }], research: true });
-    expect(standard.max_completion_tokens).toBe(360);
+    expect(standard.max_completion_tokens).toBe(180);
     expect(standard).not.toHaveProperty("tools");
     expect(research).toMatchObject({ provider: { sort: "latency" }, tools: [{ type: "openrouter:web_search", parameters: { engine: "native", max_results: 3 } }] });
   });
@@ -57,11 +57,33 @@ describe("configured model registry", () => {
       { ...models[1], modelId: "qwen/fast-free", displayName: "Qwen" },
       { ...models[1], modelId: "openrouter/free", displayName: "Router" },
     ]);
-    expect(candidates.map(model => model.modelId)).toEqual(["google/fast-free", "qwen/fast-free", "cohere/slow-free"]);
+    expect(candidates.map(model => model.modelId)).toEqual(["cohere/slow-free", "google/fast-free", "qwen/fast-free"]);
+  });
+
+  it("puts the measured fast Cohere candidate ahead of a known slow fast-route candidate", () => {
+    const candidates = prioritizeFastFreeModels([
+      { ...models[1], modelId: "liquid/lfm-2.5-2.6b:free", displayName: "Liquid" },
+      { ...models[1], modelId: "cohere/north-mini-code:free", displayName: "Cohere North" },
+    ]);
+    expect(candidates.map(model => model.modelId)).toEqual(["cohere/north-mini-code:free", "liquid/lfm-2.5-2.6b:free"]);
+  });
+
+  it("makes the measured managed route the default fastest choice while preserving the free route separately", () => {
+    const ranked = prioritizeDefaultFastestModels([
+      { ...models[1], modelId: "openrouter/free", displayName: "Free router" },
+      { ...models[0], modelId: "gpt-5-mini", displayName: "GPT mini" },
+      { ...models[0], modelId: "claude-haiku-4-5", displayName: "Claude Haiku" },
+    ]);
+    expect(ranked.map(model => model.modelId)).toEqual(["claude-haiku-4-5", "gpt-5-mini", "openrouter/free"]);
   });
 
   it("selects a real managed fallback from the live catalog even if preferred IDs change", () => {
     expect(selectManagedFastModels([{ id: "claude-haiku-4-5" }, { id: "other" }]).map(model => model.modelId)).toEqual(["claude-haiku-4-5"]);
+    expect(selectManagedFastModels([{ id: "gpt-5-mini" }, { id: "claude-haiku-4-5" }]).map(model => model.modelId)).toEqual(["claude-haiku-4-5", "gpt-5-mini"]);
     expect(selectManagedFastModels([{ id: "live-catalog-model" }]).map(model => model.modelId)).toEqual(["live-catalog-model"]);
+  });
+
+  it("keeps the verified model registry warm long enough to remove catalog discovery from repeated chat sends", () => {
+    expect(MODEL_REGISTRY_TTL_MS).toBe(10 * 60_000);
   });
 });
