@@ -30,3 +30,7 @@ Then open [http://127.0.0.1:3000](http://127.0.0.1:3000). In **Configuration**, 
 ## Security notes
 
 Do not commit `.env`. Use a unique, long `JWT_SECRET`; changing it makes stored encrypted provider keys unreadable. The local CLI does not rotate or pool keys to bypass any provider limits. When configured, Respan is a separate, transparently attributed fallback route.
+
+## Android delivery
+
+This repository does not contain an APK. See [the secure Android delivery plan](docs/android-delivery-plan.md) for the required published backend, native authentication, provider-key boundary, and build-signing prerequisites.

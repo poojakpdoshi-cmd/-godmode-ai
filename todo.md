@@ -76,7 +76,7 @@
 - [ ] Live-verify the automatic Respan fallback after the user connects a Respan key in the app.
 - [x] Add an explicit streaming fallback consent control and reflect the active fallback provider/model immediately in the live chat UI.
 - [x] Document and test that fallback applies only to authorized OpenRouter fast streaming, not research or other direct routes.
-- [ ] Assess and prepare an Android APK delivery path for the existing full-stack GODMODE application without exposing provider credentials.
+- [x] Assess and prepare an Android APK delivery path for the existing full-stack GODMODE application without exposing provider credentials.
 - [x] Create and push the verified GODMODE AI source to the user-approved public GitHub repository.
 - [x] Add and test a local-run npm CLI that starts GODMODE safely in the user’s browser with documented environment setup.
 - [x] Work around the GitHub repository-creation permission blocker by pushing to the user-created public repository URL.
