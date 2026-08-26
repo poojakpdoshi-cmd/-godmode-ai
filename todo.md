@@ -78,3 +78,6 @@
 - [ ] Add and test a local-run npm CLI that starts GODMODE safely in the user’s browser with documented environment setup.
 - [ ] Resolve the current GitHub repository-creation permission blocker or receive a user-created private repository URL for the push.
 - [ ] Perform a public-release secret scan, then create and push the user-approved public GitHub repository.
+- [ ] Resolve the confirmed GitHub write-permission denial for the user-created public repository before pushing commits.
+- [ ] Obtain a one-time user-authorized GitHub write credential or browser session to complete the public push.
+- [ ] Securely collect the scoped GitHub token, push to the user-created public repository, and remove the temporary credential path.
