@@ -102,6 +102,12 @@ describe("chat execution service", () => {
     expect(db.appendConversationMessage).toHaveBeenLastCalledWith(expect.objectContaining({ role: "assistant", status: "failed", content: "", errorMessage: "Provider rejected request" }));
   });
 
+  it("persists research-mode metadata with the final cited provider response", async () => {
+    provider.invokeConfiguredModel.mockResolvedValue({ output: "Current answer\n\nSources:\n- [Official](https://example.com)", usage: { totalTokens: 99 } });
+    await sendChatMessage({ userId: 7, conversationId: conversation.id, content: "Find the current answer", mode: "solo", selections: [{ providerId: "openrouter", modelId: "qwen/test" }], research: true });
+    expect(db.appendConversationMessage).toHaveBeenLastCalledWith(expect.objectContaining({ role: "assistant", researchMode: true, status: "completed", totalTokens: 99 }));
+  });
+
   it("stops an account-gated OpenRouter request before a user message or retry loop is created", async () => {
     provider.assertOpenRouterFreeAccess.mockRejectedValue(new Error("OpenRouter could not run this model because the connected account has insufficient API credits."));
     await expect(sendChatMessage({ userId: 7, conversationId: conversation.id, content: "Write a function", mode: "solo", selections: [{ providerId: "openrouter", modelId: "qwen/test" }] })).rejects.toThrow("insufficient API credits");

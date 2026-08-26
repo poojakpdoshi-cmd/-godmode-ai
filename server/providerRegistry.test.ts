@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildProviderCompletionPayload, CallableModel, describeProviderRequestFailure, describeProviderTransportFailure, isVerifiedFreeOpenRouterModel, prioritizeFastFreeModels, ProviderDiagnostic, retainCallableModels, selectManagedFastModels } from "./providerRegistry";
+import { buildProviderCompletionPayload, CallableModel, describeProviderRequestFailure, describeProviderTransportFailure, isTextChatCapableModel, isVerifiedFreeOpenRouterModel, prioritizeFastFreeModels, ProviderDiagnostic, retainCallableModels, selectManagedFastModels } from "./providerRegistry";
 
 const models: CallableModel[] = [
   { key: "platform:callable", providerId: "platform", providerName: "Platform catalog", modelId: "callable", displayName: "Callable", supportsTools: false, supportsVision: false, inputTypes: ["text"] },
@@ -27,6 +27,12 @@ describe("configured model registry", () => {
     expect(isVerifiedFreeOpenRouterModel({ id: "free-model", pricing: { prompt: "0", completion: "0", request: "0" } })).toBe(true);
     expect(isVerifiedFreeOpenRouterModel({ id: "paid-model", pricing: { prompt: "0", completion: "0.000001" } })).toBe(false);
     expect(isVerifiedFreeOpenRouterModel({ id: "unknown-price-model" })).toBe(false);
+  });
+
+  it("keeps the chat registry text-only and excludes explicit audio-output models", () => {
+    expect(isTextChatCapableModel({ id: "text-chat", architecture: { input_modalities: ["text"], output_modalities: ["text"] } })).toBe(true);
+    expect(isTextChatCapableModel({ id: "audio-generation", architecture: { input_modalities: ["text"], output_modalities: ["audio"] } })).toBe(false);
+    expect(isTextChatCapableModel({ id: "mixed-audio-generation", architecture: { input_modalities: ["text"], output_modalities: ["text", "audio"] } })).toBe(false);
   });
 
   it("turns a transient fetch failure into a clear retryable provider diagnostic", () => {

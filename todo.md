@@ -39,20 +39,27 @@
 - [x] Diagnose the observed 10-second model latency and fetch failure using real execution and network diagnostics.
 - [x] Reduce app-side chat latency through bounded context, output controls, fast routing defaults, and reliable retry behavior.
 - [x] Add latency and transient-fetch failure tests for bounded history and retryable provider diagnostics.
-- [ ] Verify the optimized request path against a live user-configured provider and compare the recorded latency with the prior execution.
+- [x] Verify the optimized request path against a live user-configured provider and compare the recorded latency with the prior execution.
 - [x] Add a fast-response profile that constrains reply length and avoids unconstrained long outputs for ordinary chat.
 - [x] Add a real web-search and source-read workflow so current-information requests execute research instead of merely claiming to search.
 - [x] Add visible truthful research and response-progress states, including citations and source links for actual web research.
-- [ ] Test normal chat latency and live web-research behavior with a configured provider, then compare execution timings and accuracy.
+- [x] Test normal chat latency and live web-research behavior with a configured provider, then compare execution timings and accuracy.
 - [x] Compile oversized saved system prompts into a compact, deterministic execution policy for fast requests while retaining the full user-authored prompt in storage.
 - [x] Route ordinary fast-mode free chats through OpenRouter’s Free Models Router unless the user explicitly opts into a different model.
-- [ ] Reduce fast-mode compiled prompt payload below 1,800 characters while retaining the full saved prompt in storage, then verify lower real prompt-token usage.
+- [x] Reduce fast-mode compiled prompt payload below 1,800 characters while retaining the full saved prompt in storage, then verify lower real prompt-token usage.
 - [x] Add an always-visible composer Web Search control rather than requiring users to open the side configuration panel.
 - [x] Implement streamed OpenRouter responses with incremental chat rendering and persistent final message metadata.
-- [ ] Test a live configured-provider normal and web-research request for first-visible response timing, final latency, tokens, and source citations.
+- [x] Test a live configured-provider normal and web-research request for first-visible response timing, final latency, tokens, and source citations.
 - [x] Record and display first-token time separately from total completion latency for streamed chat responses.
 - [x] Add latency-aware fast free-model selection with a truthful fallback path when the selected free upstream is congested or fails.
 - [x] Show upstream queue/congestion diagnostics instead of implying a slow free model is an application-side delay.
 - [x] Detect and clearly surface account-level OpenRouter free-access eligibility failures before repeated chat attempts.
 - [x] Provide a live managed-catalog fallback route and prevent falsely advertising account-gated OpenRouter models as usable.
 - [x] Diagnose and fix the reported blank preview with its current runtime error before any further live-provider testing.
+- [x] Personally verify the repaired preview and safely exercise the user’s stored provider route without exposing credentials.
+- [x] Exclude non-text-output OpenRouter catalog models from the chatbot route so audio or media models cannot be selected for text chat.
+- [x] Verify a live in-app Web Search persists and renders actual OpenRouter citation links rather than only a model-written URL.
+- [x] Measure and surface research-path timing separately, documenting its first-visible behavior accurately.
+- [x] Run a real persisted research chat through the user-scoped application flow and verify the saved assistant message contains rendered citation links.
+- [x] Add explicit research timing metadata to the rendered conversation and verify it end to end.
+- [x] Extract explicit clickable research-source and final-only timing components, then verify their rendered output with automated UI tests.

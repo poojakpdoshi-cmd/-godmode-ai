@@ -1,0 +1,1 @@
+ALTER TABLE `conversationMessages` ADD `researchMode` enum('yes','no') DEFAULT 'no' NOT NULL;

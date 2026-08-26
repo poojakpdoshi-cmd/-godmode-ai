@@ -60,3 +60,10 @@
 .managed-route .provider-glyph { margin: 0; }
 .managed-route strong { display: block; font-size: 10px; }
 .managed-route small { display: block; color: #718e9c; font-size: 9px; line-height: 1.45; margin-top: 3px; }
+
+.research-sources { margin-top: 13px; padding: 9px; border: 1px solid rgba(105, 223, 184, .27); background: rgba(50, 170, 133, .07); }
+.research-sources > span { display: inline-flex; align-items: center; gap: 5px; color: #9cf2cf; font: 700 8px "IBM Plex Mono", monospace; letter-spacing: .06em; text-transform: uppercase; }
+.research-sources > div { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+.research-sources a { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; color: #b8ead8; border: 1px solid rgba(117, 226, 190, .24); padding: 4px 6px; font: 600 9px "IBM Plex Mono", monospace; text-decoration: none; }
+.research-sources a:hover, .research-sources a:focus-visible { color: #e4fff4; border-color: rgba(117, 226, 190, .68); outline: none; }
+.research-final-timing { display: inline-flex; align-items: center; gap: 4px; color: #9cd9c3; }

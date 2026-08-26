@@ -163,6 +163,7 @@ export const conversationMessages = mysqlTable(
     content: text("content").notNull(),
     providerId: varchar("providerId", { length: 64 }),
     modelId: varchar("modelId", { length: 255 }),
+    researchMode: mysqlEnum("researchMode", ["yes", "no"]).default("no").notNull(),
     status: mysqlEnum("status", ["completed", "failed"]).default("completed").notNull(),
     errorMessage: text("errorMessage"),
     firstTokenMs: int("firstTokenMs"),

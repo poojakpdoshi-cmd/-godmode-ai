@@ -76,7 +76,12 @@ async function startServer() {
         } catch (error) {
           lastError = error instanceof Error ? error : new Error("Free model attempt failed.");
           if (emitted) throw lastError;
-          write("status", { message: `Free model was congested; trying another verified free model (${index + 1}/${candidates.length}).` });
+          const fallbackReason = lastError.message.includes("rate-limiting")
+            ? "Free model is rate-limiting this account"
+            : lastError.message.includes("did not start producing text")
+              ? "Free model did not start producing text in time"
+              : "Free model request did not complete";
+          write("status", { message: `${fallbackReason}; trying another verified free model (${index + 1}/${candidates.length}).` });
         }
       }
       if (!result) throw lastError ?? new Error("All available free models were congested.");

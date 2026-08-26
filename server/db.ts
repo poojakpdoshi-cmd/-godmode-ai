@@ -284,6 +284,7 @@ export async function appendConversationMessage(input: {
   content: string;
   providerId?: string;
   modelId?: string;
+  researchMode?: boolean;
   status?: "completed" | "failed";
   errorMessage?: string;
   firstTokenMs?: number;
@@ -303,6 +304,7 @@ export async function appendConversationMessage(input: {
     content: input.content,
     providerId: input.providerId ?? null,
     modelId: input.modelId ?? null,
+    researchMode: input.researchMode ? "yes" as const : "no" as const,
     status: input.status ?? "completed" as const,
     errorMessage: input.errorMessage ?? null,
     firstTokenMs: input.firstTokenMs ?? null,

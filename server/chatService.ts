@@ -61,10 +61,10 @@ export async function sendChatMessage(input: { userId: number; conversationId: s
     const startedAt = Date.now();
     try {
       const result = await invokeConfiguredModel({ userId: input.userId, providerId: selection.providerId, modelId: selection.modelId, messages: providerMessages, research: input.research });
-      await db.appendConversationMessage({ userId: input.userId, conversationId: conversation.id, replyToMessageId: userMessage.id, role: "assistant", content: result.output || "The provider returned an empty response.", providerId: selection.providerId, modelId: selection.modelId, status: "completed", latencyMs: Date.now() - startedAt, ...result.usage });
+      await db.appendConversationMessage({ userId: input.userId, conversationId: conversation.id, replyToMessageId: userMessage.id, role: "assistant", content: result.output || "The provider returned an empty response.", providerId: selection.providerId, modelId: selection.modelId, researchMode: input.research, status: "completed", latencyMs: Date.now() - startedAt, ...result.usage });
     } catch (error) {
       const message = error instanceof Error ? error.message.slice(0, 1_500) : "Unknown provider error";
-      await db.appendConversationMessage({ userId: input.userId, conversationId: conversation.id, replyToMessageId: userMessage.id, role: "assistant", content: "", providerId: selection.providerId, modelId: selection.modelId, status: "failed", errorMessage: message, latencyMs: Date.now() - startedAt });
+      await db.appendConversationMessage({ userId: input.userId, conversationId: conversation.id, replyToMessageId: userMessage.id, role: "assistant", content: "", providerId: selection.providerId, modelId: selection.modelId, researchMode: input.research, status: "failed", errorMessage: message, latencyMs: Date.now() - startedAt });
     }
   }));
   return db.getConversationDetail(input.userId, conversation.id);

@@ -8,7 +8,7 @@ export type CallableModel = { key: string; providerId: ProviderId; providerName:
 export type ProviderDiagnostic = { providerId: ProviderId; providerName: string; configured: boolean; healthy: boolean; modelCount: number; checkedAt: number; error?: string; credentialStored?: boolean };
 export type ModelRegistry = { models: CallableModel[]; diagnostics: ProviderDiagnostic[]; checkedAt: number };
 type CompletionResult = { output: string; usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number } };
-type CompatibleModel = { id: string; name?: string; context_length?: number; supported_parameters?: string[]; architecture?: { input_modalities?: string[] }; pricing?: Record<string, string | undefined> };
+type CompatibleModel = { id: string; name?: string; context_length?: number; supported_parameters?: string[]; architecture?: { input_modalities?: string[]; output_modalities?: string[] }; pricing?: Record<string, string | undefined> };
 
 const PROVIDERS = {
   openrouter: { name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1" },
@@ -161,8 +161,14 @@ function isZeroPrice(value: string | undefined) {
 
 export function isVerifiedFreeOpenRouterModel(model: CompatibleModel) {
   if (!model.pricing) return false;
-  const relevantPrices = ["prompt", "completion", "request", "image", "web_search", "internal_reasoning", "input_cache_read", "input_cache_write"];
+  const relevantPrices = ["prompt", "completion", "request", "image", "audio", "video", "web_search", "internal_reasoning", "input_cache_read", "input_cache_write"];
   return relevantPrices.every(key => isZeroPrice(model.pricing?.[key]));
+}
+
+export function isTextChatCapableModel(model: CompatibleModel) {
+  const inputModalities = model.architecture?.input_modalities;
+  const outputModalities = model.architecture?.output_modalities;
+  return (!inputModalities || inputModalities.includes("text")) && (!outputModalities || (outputModalities.includes("text") && outputModalities.every(modality => modality === "text")));
 }
 
 async function compatibleModels(providerId: "openrouter" | "respan", apiKey: string) {
@@ -172,7 +178,7 @@ async function compatibleModels(providerId: "openrouter" | "respan", apiKey: str
   const body = await response.json() as { data?: CompatibleModel[] };
   if (!Array.isArray(body.data)) throw new Error(`${provider.name} returned an invalid model catalog`);
   const sourceModels = body.data.filter(model => Boolean(model.id));
-  const permittedModels = providerId === "openrouter" ? sourceModels.filter(isVerifiedFreeOpenRouterModel) : sourceModels;
+  const permittedModels = providerId === "openrouter" ? sourceModels.filter(model => isVerifiedFreeOpenRouterModel(model) && isTextChatCapableModel(model)) : sourceModels.filter(isTextChatCapableModel);
   const discovered = permittedModels.map(model => ({ key: `${providerId}:${model.id}`, providerId, providerName: provider.name, modelId: model.id, displayName: model.name || model.id, contextLength: model.context_length, supportsTools: model.supported_parameters?.includes("tools") ?? false, supportsVision: model.architecture?.input_modalities?.includes("image") ?? false, inputTypes: model.architecture?.input_modalities ?? ["text"] })) as CallableModel[];
   if (providerId === "openrouter" && !discovered.some(model => model.modelId === "openrouter/free")) {
     discovered.unshift({ key: "openrouter:openrouter/free", providerId: "openrouter", providerName: "OpenRouter · Free router", modelId: "openrouter/free", displayName: "Free router (automatic)", supportsTools: false, supportsVision: false, inputTypes: ["text"] });
