@@ -9,8 +9,10 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { sdk } from "./sdk";
+import { ENV } from "./env";
+import { getOrCreateLocalUser } from "../db";
 import { prepareStreamedChat, persistStreamedAssistantMessage, persistStreamedFailure } from "../chatService";
-import { getFastFreeCandidates, streamConfiguredModel } from "../providerRegistry";
+import { getFastFreeCandidates, getRespanFallbackModel, shouldUseRespanFallback, streamConfiguredModel } from "../providerRegistry";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -40,7 +42,7 @@ async function startServer() {
   registerStorageProxy(app);
   registerOAuthRoutes(app);
   app.post("/api/godmode/stream", async (req, res) => {
-    const user = await sdk.authenticateRequest(req).catch(() => null);
+    const user = ENV.localMode ? await getOrCreateLocalUser().catch(() => null) : await sdk.authenticateRequest(req).catch(() => null);
     if (!user) { res.status(401).json({ error: "Authentication required." }); return; }
     const input = req.body as { conversationId?: string; content?: string; selection?: { providerId?: string; modelId?: string } };
     if (!input.conversationId || !input.content?.trim() || input.content.length > 32_000 || input.selection?.providerId !== "openrouter" || !input.selection.modelId) { res.status(400).json({ error: "Invalid streaming chat request." }); return; }
@@ -54,41 +56,50 @@ async function startServer() {
     let startedAt = Date.now();
     try {
       plan = await prepareStreamedChat({ userId: user.id, conversationId: input.conversationId, content: input.content, selection: { providerId: "openrouter", modelId: input.selection.modelId } });
-      const candidates = await getFastFreeCandidates(user.id);
-      if (!candidates.length) throw new Error("No verified free OpenRouter model is available for fast routing.");
       let result: Awaited<ReturnType<typeof streamConfiguredModel>> | null = null;
       let firstTokenMs: number | null = null;
-      let activeModelId = candidates[0].modelId;
+      let finalSelection: { providerId: "openrouter" | "respan"; modelId: string } = { providerId: "openrouter", modelId: "openrouter/free" };
       let lastError: Error | null = null;
-      for (let index = 0; index < candidates.length; index += 1) {
-        const candidate = candidates[index];
-        activeModelId = candidate.modelId;
-        let emitted = false;
-        write("meta", { modelId: candidate.modelId, attempt: index + 1, candidateCount: candidates.length });
-        startedAt = Date.now();
-        try {
-          result = await streamConfiguredModel({ userId: user.id, providerId: "openrouter", modelId: candidate.modelId, messages: plan.messages }, (chunk: string) => {
-            emitted = true;
-            if (firstTokenMs === null) { firstTokenMs = Date.now() - startedAt; write("first-token", { firstTokenMs }); }
-            write("delta", { chunk });
-          });
-          break;
-        } catch (error) {
-          lastError = error instanceof Error ? error : new Error("Free model attempt failed.");
-          if (emitted) throw lastError;
-          const fallbackReason = lastError.message.includes("rate-limiting")
-            ? "Free model is rate-limiting this account"
-            : lastError.message.includes("did not start producing text")
-              ? "Free model did not start producing text in time"
-              : "Free model request did not complete";
-          write("status", { message: `${fallbackReason}; trying another verified free model (${index + 1}/${candidates.length}).` });
+      try {
+        const candidates = await getFastFreeCandidates(user.id);
+        if (!candidates.length) throw new Error("No verified free OpenRouter model is available for fast routing.");
+        for (let index = 0; index < candidates.length; index += 1) {
+          const candidate = candidates[index];
+          let emitted = false;
+          write("meta", { modelId: candidate.modelId, attempt: index + 1, candidateCount: candidates.length });
+          startedAt = Date.now();
+          try {
+            result = await streamConfiguredModel({ userId: user.id, providerId: "openrouter", modelId: candidate.modelId, messages: plan.messages }, (chunk: string) => {
+              emitted = true;
+              if (firstTokenMs === null) { firstTokenMs = Date.now() - startedAt; write("first-token", { firstTokenMs }); }
+              write("delta", { chunk });
+            });
+            finalSelection = { providerId: "openrouter", modelId: candidate.modelId };
+            break;
+          } catch (error) {
+            lastError = error instanceof Error ? error : new Error("Free model attempt failed.");
+            if (emitted) throw lastError;
+          }
         }
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error("Free model attempt failed.");
+      }
+      if (!result && lastError && shouldUseRespanFallback(lastError)) {
+        const fallback = await getRespanFallbackModel(user.id);
+        firstTokenMs = null;
+        startedAt = Date.now();
+        write("status", { message: `OpenRouter is unavailable (${lastError.message}); switching to your connected Respan fallback.` });
+        write("meta", { modelId: fallback.modelId, attempt: 1, candidateCount: 1 });
+        result = await streamConfiguredModel({ userId: user.id, providerId: "respan", modelId: fallback.modelId, messages: plan.messages }, (chunk: string) => {
+          if (firstTokenMs === null) { firstTokenMs = Date.now() - startedAt; write("first-token", { firstTokenMs }); }
+          write("delta", { chunk });
+        });
+        finalSelection = { providerId: "respan", modelId: fallback.modelId };
       }
       if (!result) throw lastError ?? new Error("All available free models were congested.");
       const latencyMs = Date.now() - startedAt;
-      const finalSelection = { providerId: "openrouter" as const, modelId: activeModelId };
       await persistStreamedAssistantMessage({ userId: user.id, conversationId: plan.conversationId, userMessageId: plan.userMessageId, selection: finalSelection, output: result.output, firstTokenMs, latencyMs, usage: result.usage });
-      write("done", { latencyMs, firstTokenMs, modelId: activeModelId, usage: result.usage });
+      write("done", { latencyMs, firstTokenMs, modelId: finalSelection.modelId, providerId: finalSelection.providerId, usage: result.usage });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Streaming request failed.";
       if (plan) await persistStreamedFailure({ userId: user.id, conversationId: plan.conversationId, userMessageId: plan.userMessageId, selection: plan.selection, errorMessage: message, latencyMs: Date.now() - startedAt }).catch(() => undefined);
@@ -119,7 +130,7 @@ async function startServer() {
     console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
   }
 
-  server.listen(port, () => {
+  server.listen(port, ENV.localMode ? "127.0.0.1" : undefined, () => {
     console.log(`Server running on http://localhost:${port}/`);
   });
 }

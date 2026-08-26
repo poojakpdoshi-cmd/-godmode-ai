@@ -33,4 +33,10 @@ describe("verified registry cache", () => {
     expect(db.listProviderConfigurations).toHaveBeenCalledTimes(1);
     expect(fetch).toHaveBeenCalledTimes(2);
   });
+
+  it("selects only the connected user-scoped Respan model as a fallback route", async () => {
+    db.listProviderConfigurations.mockResolvedValue([{ providerId: "respan", isEnabled: "yes", credentialEncrypted: "cipher" }]);
+    const model = await registry.getRespanFallbackModel(913);
+    expect(model).toMatchObject({ providerId: "respan", modelId: "cohere/north-mini-code:free" });
+  });
 });

@@ -58,6 +58,16 @@ export async function getUserByOpenId(openId: string) {
   return (await db.select().from(users).where(eq(users.openId, openId)).limit(1))[0];
 }
 
+export async function getOrCreateLocalUser() {
+  const openId = "godmode-local-operator";
+  const existing = await getUserByOpenId(openId);
+  if (existing) return existing;
+  await upsertUser({ openId, name: ENV.localUserName, loginMethod: "local", role: "admin" });
+  const created = await getUserByOpenId(openId);
+  if (!created) throw new Error("Unable to create the local GODMODE operator.");
+  return created;
+}
+
 export async function listProjects(userId: number) {
   const db = await getDb();
   if (!db) return [];

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildProviderCompletionPayload, CallableModel, describeProviderRequestFailure, describeProviderTransportFailure, isTextChatCapableModel, isVerifiedFreeOpenRouterModel, MODEL_REGISTRY_TTL_MS, prioritizeDefaultFastestModels, prioritizeFastFreeModels, ProviderDiagnostic, retainCallableModels, selectManagedFastModels } from "./providerRegistry";
+import { buildProviderCompletionPayload, CallableModel, describeProviderRequestFailure, describeProviderTransportFailure, isTextChatCapableModel, isVerifiedFreeOpenRouterModel, MODEL_REGISTRY_TTL_MS, prioritizeDefaultFastestModels, prioritizeFastFreeModels, ProviderDiagnostic, retainCallableModels, selectManagedFastModels, shouldUseRespanFallback } from "./providerRegistry";
 
 const models: CallableModel[] = [
   { key: "platform:callable", providerId: "platform", providerName: "Platform catalog", modelId: "callable", displayName: "Callable", supportsTools: false, supportsVision: false, inputTypes: ["text"] },
@@ -85,5 +85,12 @@ describe("configured model registry", () => {
 
   it("keeps the verified model registry warm long enough to remove catalog discovery from repeated chat sends", () => {
     expect(MODEL_REGISTRY_TTL_MS).toBe(10 * 60_000);
+  });
+
+  it("allows Respan fallback only for OpenRouter availability or access failures", () => {
+    expect(shouldUseRespanFallback(new Error("OpenRouter is rate-limiting this account."))).toBe(true);
+    expect(shouldUseRespanFallback(new Error("OpenRouter could not run this model because the connected account has insufficient API credits."))).toBe(true);
+    expect(shouldUseRespanFallback(new Error("OpenRouter did not produce first text within 2.75s."))).toBe(true);
+    expect(shouldUseRespanFallback(new Error("The user asked for a longer answer."))).toBe(false);
   });
 });

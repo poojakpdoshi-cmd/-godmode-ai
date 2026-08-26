@@ -69,7 +69,7 @@ describe("chat execution service", () => {
     const plan = await prepareStreamedChat({ userId: 7, conversationId: conversation.id, content: "Stream hello", selection: { providerId: "openrouter", modelId: "cohere/north-mini-code:free" } });
     expect(plan.selection).toEqual({ providerId: "openrouter", modelId: "openrouter/free" });
     expect(db.updateConversationConfiguration).toHaveBeenCalledWith(expect.objectContaining({ userId: 7, conversationId: conversation.id, selectedModels: JSON.stringify([{ providerId: "openrouter", modelId: "cohere/north-mini-code:free" }]) }));
-    expect(provider.requireCallableModel).toHaveBeenCalledWith(7, "openrouter", "openrouter/free");
+    expect(provider.requireCallableModel).not.toHaveBeenCalled();
   });
 
   it("persists first-token time separately from total streamed completion time", async () => {

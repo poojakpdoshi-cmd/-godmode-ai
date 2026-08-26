@@ -75,8 +75,6 @@ export async function prepareStreamedChat(input: { userId: number; conversationI
   if (!conversation) throw new Error("Conversation not found.");
   if (input.selection.providerId !== "openrouter") throw new Error("Fast streaming currently requires OpenRouter routing.");
   const selection: ChatSelection = { providerId: "openrouter", modelId: "openrouter/free" };
-  await assertOpenRouterFreeAccess(input.userId);
-  await requireCallableModel(input.userId, selection.providerId, selection.modelId);
   await db.updateConversationConfiguration({ userId: input.userId, conversationId: conversation.id, mode: "solo", selectedModels: JSON.stringify([input.selection]) });
   const userMessage = await db.appendConversationMessage({ userId: input.userId, conversationId: conversation.id, role: "user", content: input.content.trim() });
   if (conversation.title === "New conversation") await db.updateConversationTitle(input.userId, conversation.id, titleFromMessage(input.content));

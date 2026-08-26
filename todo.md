@@ -70,3 +70,9 @@
 - [x] Make the measured managed model the clear default fastest route and reduce free fast mode to a single bounded attempt.
 - [x] Prove repeated fast-route lookups reuse the verified registry cache without rediscovery or re-probing inside its TTL.
 - [x] Prove the ranked default fastest selection and route behavior end to end rather than only through manual model selection.
+- [ ] Diagnose and fix the newly reported non-working fast-route or preview behavior from current runtime evidence.
+- [x] Clarify whether the user wants a compliant OpenRouter-plus-Respan fallback workflow rather than key rotation to bypass provider limits.
+- [ ] Implement an explicit user-authorized OpenRouter-to-Respan fallback for rate-limit, access, and availability failures with truthful provider attribution.
+- [ ] Assess and prepare an Android APK delivery path for the existing full-stack GODMODE application without exposing provider credentials.
+- [ ] Create a private GitHub repository and push the verified GODMODE AI source.
+- [ ] Add and test a local-run npm CLI that starts GODMODE safely in the user’s browser with documented environment setup.

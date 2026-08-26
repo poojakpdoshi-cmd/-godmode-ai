@@ -275,6 +275,17 @@ export async function getFastFreeCandidates(userId: number) {
   return prioritizeFastFreeModels((await assertOpenRouterFreeAccess(userId)).models).slice(0, 1);
 }
 
+export async function getRespanFallbackModel(userId: number) {
+  const model = (await getModelRegistry(userId)).models.find(candidate => candidate.providerId === "respan");
+  if (!model) throw new Error("No connected Respan fallback model is available for this user.");
+  return model;
+}
+
+export function shouldUseRespanFallback(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  return ["rate-limiting", "insufficient api credits", "not authorized", "free access is not verified", "did not produce first text", "did not start producing text", "all available free models"].some(trigger => message.includes(trigger));
+}
+
 export function clearModelRegistryCache(userId?: number) {
   if (userId === undefined) { cache.clear(); openRouterEligibilityCache.clear(); }
   else { cache.delete(userId); openRouterEligibilityCache.delete(userId); }
