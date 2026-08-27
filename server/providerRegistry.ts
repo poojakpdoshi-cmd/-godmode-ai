@@ -18,6 +18,7 @@ const cache = new Map<number, { expiresAt: number; registry: ModelRegistry }>();
 const openRouterEligibilityCache = new Map<number, number>();
 export const MODEL_REGISTRY_TTL_MS = 10 * 60_000;
 const REQUEST_TIMEOUT_MS = 35_000;
+const SHORT_COMPLETION_TOKEN_LIMIT = 96;
 const FAST_COMPLETION_TOKEN_LIMIT = 180;
 const FAST_ROUTE_FIRST_TEXT_TIMEOUT_MS = 2_750;
 const FAST_FREE_MODEL_IDS = ["cohere/north-mini-code:free", "nvidia/nemotron-3.5-lightning:free", "thinkingmachines/inkling-small:free"];
@@ -68,12 +69,19 @@ export function describeProviderTransportFailure(providerName: string, error: un
   return `${providerName} could not be reached for this request. No response was generated. Check the connection and retry the same model.${detail && detail !== "fetch failed" ? ` Detail: ${detail}` : ""}`;
 }
 
+export function completionTokenLimit(messages: ProviderMessage[], research = false) {
+  if (research) return FAST_COMPLETION_TOKEN_LIMIT;
+  const latestUserContent = [...messages].reverse().find(message => message.role === "user")?.content.replace(/\s+/g, " ").trim() ?? "";
+  return latestUserContent.length <= 280 ? SHORT_COMPLETION_TOKEN_LIMIT : FAST_COMPLETION_TOKEN_LIMIT;
+}
+
 export function buildProviderCompletionPayload(input: { providerId: ProviderId; modelId: string; messages: ProviderMessage[]; research?: boolean }) {
+  const tokenLimit = completionTokenLimit(input.messages, input.research);
   return {
     model: input.modelId,
     messages: input.messages,
-    max_completion_tokens: FAST_COMPLETION_TOKEN_LIMIT,
-    max_tokens: FAST_COMPLETION_TOKEN_LIMIT,
+    max_completion_tokens: tokenLimit,
+    max_tokens: tokenLimit,
     ...(input.providerId === "openrouter" ? {
       provider: { sort: "latency", allow_fallbacks: true },
       ...(input.research ? { tools: [{ type: "openrouter:web_search", parameters: { engine: "native", max_results: 3, search_context_size: "low" } }] } : {}),
@@ -319,7 +327,7 @@ export async function requireCallableModel(userId: number, providerId: ProviderI
 export async function invokeConfiguredModel(input: { userId: number; providerId: ProviderId; modelId: string; messages: ProviderMessage[]; research?: boolean }): Promise<CompletionResult> {
   await requireCallableModel(input.userId, input.providerId, input.modelId);
   if (input.providerId === "platform") {
-    const result = await invokeLLM({ model: input.modelId, messages: input.messages });
+    const result = await invokeLLM({ model: input.modelId, messages: input.messages, maxTokens: completionTokenLimit(input.messages, input.research) });
     return { output: textContent(result.choices[0]?.message.content), usage: result.usage ? { promptTokens: result.usage.prompt_tokens, completionTokens: result.usage.completion_tokens, totalTokens: result.usage.total_tokens } : undefined };
   }
   const configuration = await db.getProviderConfiguration(input.userId, input.providerId);

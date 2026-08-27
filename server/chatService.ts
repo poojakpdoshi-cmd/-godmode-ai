@@ -6,8 +6,13 @@ export type ChatMode = "solo" | "competition";
 export type ProviderMessage = { role: "system" | "user" | "assistant"; content: string };
 const MAX_HISTORY_TURNS = 12;
 const MAX_HISTORY_CHARACTERS = 24_000;
-const FAST_RESPONSE_POLICY = "Fast response profile is active. Give the direct answer first, keep the answer under 100 words unless the user explicitly asks for depth, avoid restating the request, and use concise bullets only when they improve clarity.";
-const FAST_POLICY_CHARACTER_LIMIT = 800;
+const MAX_FAST_HISTORY_MESSAGES = 6;
+const MAX_FAST_HISTORY_CHARACTERS = 8_000;
+const MAX_SHORT_TASK_HISTORY_MESSAGES = 2;
+const MAX_SHORT_TASK_HISTORY_CHARACTERS = 1_200;
+const SHORT_TASK_CHARACTER_LIMIT = 280;
+const FAST_RESPONSE_POLICY = "Answer directly. Be concise; do not restate the request. Use more detail only when asked.";
+const FAST_POLICY_CHARACTER_LIMIT = 360;
 
 export function validateChatSelections(mode: ChatMode, selections: ChatSelection[]) {
   const unique = selections.filter((selection, index, list) => list.findIndex(candidate => candidate.providerId === selection.providerId && candidate.modelId === selection.modelId) === index);
@@ -18,18 +23,27 @@ export function validateChatSelections(mode: ChatMode, selections: ChatSelection
 
 export function compileExecutionPolicy(systemPrompt: string | null, fast = true) {
   if (!systemPrompt || !fast || systemPrompt.length <= FAST_POLICY_CHARACTER_LIMIT) return systemPrompt;
-  const opening = systemPrompt.slice(0, 480);
-  const closing = systemPrompt.slice(-120);
+  const opening = systemPrompt.slice(0, 210);
+  const closing = systemPrompt.slice(-70);
   return `${opening}\n\n[Fast execution policy: the full saved prompt is retained, but this request uses the opening and closing instructions to minimize provider latency.]\n\n${closing}`;
+}
+
+export function isShortTask(content: string) {
+  return content.replace(/\s+/g, " ").trim().length <= SHORT_TASK_CHARACTER_LIMIT;
 }
 
 export function buildProviderMessages(systemPrompt: string | null, messages: Array<{ role: string; content: string; status: string }>, fast = true): ProviderMessage[] {
   const activePolicy = compileExecutionPolicy(systemPrompt, fast);
-  const completedTurns = messages.filter(message => message.status === "completed" && (message.role === "user" || message.role === "assistant")).slice(-MAX_HISTORY_TURNS);
+  const completed = messages.filter(message => message.status === "completed" && (message.role === "user" || message.role === "assistant"));
+  const latestUserContent = [...completed].reverse().find(message => message.role === "user")?.content ?? "";
+  const shortTask = fast && isShortTask(latestUserContent);
+  const messageLimit = shortTask ? MAX_SHORT_TASK_HISTORY_MESSAGES : fast ? MAX_FAST_HISTORY_MESSAGES : MAX_HISTORY_TURNS;
+  const characterLimit = shortTask ? MAX_SHORT_TASK_HISTORY_CHARACTERS : fast ? MAX_FAST_HISTORY_CHARACTERS : MAX_HISTORY_CHARACTERS;
+  const completedTurns = completed.slice(-messageLimit);
   const recentTurns: ProviderMessage[] = [];
   let characters = 0;
   for (const message of [...completedTurns].reverse()) {
-    if (recentTurns.length && characters + message.content.length > MAX_HISTORY_CHARACTERS) break;
+    if (recentTurns.length && characters + message.content.length > characterLimit) break;
     characters += message.content.length;
     recentTurns.unshift({ role: message.role as "user" | "assistant", content: message.content });
   }
@@ -56,7 +70,7 @@ export async function sendChatMessage(input: { userId: number; conversationId: s
   const userMessage = await db.appendConversationMessage({ userId: input.userId, conversationId: conversation.id, role: "user", content: input.content.trim() });
   if (conversation.title === "New conversation") await db.updateConversationTitle(input.userId, conversation.id, titleFromMessage(input.content));
   const history = await db.listConversationMessages(input.userId, conversation.id);
-  const providerMessages = buildProviderMessages(conversation.systemPrompt, history, input.fast !== false);
+  const providerMessages = buildProviderMessages(conversation.systemPrompt, history, input.fast !== false && !input.research);
   await Promise.all(routedSelections.map(async selection => {
     const startedAt = Date.now();
     try {

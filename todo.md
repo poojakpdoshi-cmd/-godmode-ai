@@ -84,3 +84,4 @@
 - [x] Resolve the confirmed GitHub write-permission denial for the user-created public repository before pushing commits.
 - [x] Obtain a one-time user-authorized GitHub write credential or browser session to complete the public push.
 - [ ] Revoke the one-time GitHub token from the GitHub settings page now that the public push is complete.
+- [x] Diagnose and reduce excessive prompt, history, and output-token usage for short chat tasks without bypassing provider limits or weakening saved-prompt behavior.

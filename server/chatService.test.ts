@@ -14,7 +14,7 @@ const provider = vi.hoisted(() => ({ assertOpenRouterFreeAccess: vi.fn(), requir
 vi.mock("./db", () => db);
 vi.mock("./providerRegistry", () => provider);
 
-import { buildProviderMessages, compileExecutionPolicy, persistStreamedAssistantMessage, prepareStreamedChat, retryChatMessage, sendChatMessage } from "./chatService";
+import { buildProviderMessages, compileExecutionPolicy, isShortTask, persistStreamedAssistantMessage, prepareStreamedChat, retryChatMessage, sendChatMessage } from "./chatService";
 
 const conversation = { id: "conversation-1", userId: 7, title: "New conversation", systemPrompt: "Be concise and write TypeScript.", mode: "solo" as const, selectedModels: "[]", respanFallback: "no" as const };
 
@@ -49,10 +49,23 @@ describe("chat execution service", () => {
     expect(providerMessages.at(-1)?.content).toBe("turn-15");
   });
 
+  it("keeps only the immediate prior context for a short fast task while retaining the saved prompt", () => {
+    const turns = Array.from({ length: 10 }, (_, index) => ({ role: index % 2 ? "assistant" : "user", content: `turn-${index}`, status: "completed" }));
+    turns.push({ role: "user", content: "What is HTTP?", status: "completed" });
+    const providerMessages = buildProviderMessages("Use a friendly tone.", turns);
+    expect(isShortTask("What is HTTP?")).toBe(true);
+    expect(providerMessages).toEqual([
+      { role: "system", content: "Use a friendly tone." },
+      { role: "system", content: expect.stringContaining("Answer directly") },
+      { role: "assistant", content: "turn-9" },
+      { role: "user", content: "What is HTTP?" },
+    ]);
+  });
+
   it("adds the explicit fast-response policy after the saved orchestration prompt", () => {
     const providerMessages = buildProviderMessages("Use a friendly tone.", [{ role: "user", content: "Explain this", status: "completed" }]);
     expect(providerMessages[0]).toEqual({ role: "system", content: "Use a friendly tone." });
-    expect(providerMessages[1]?.content).toContain("Fast response profile is active");
+    expect(providerMessages[1]?.content).toContain("Answer directly");
   });
 
   it("compiles an oversized saved prompt into a deterministic compact fast-execution policy", () => {
@@ -62,7 +75,7 @@ describe("chat execution service", () => {
     expect(compiled?.length).toBeLessThan(longPrompt.length);
     expect(compiled?.length).toBeLessThanOrEqual(800);
     expect(compiled?.startsWith("A")).toBe(true);
-    expect(compiled?.endsWith("B".repeat(120))).toBe(true);
+    expect(compiled?.endsWith("B".repeat(70))).toBe(true);
   });
 
   it("prepares a user-scoped streamed request through the free router while keeping the saved selection", async () => {
@@ -89,7 +102,7 @@ describe("chat execution service", () => {
     await sendChatMessage({ userId: 7, conversationId: conversation.id, content: "Write a function", mode: "solo", selections: [{ providerId: "openrouter", modelId: "qwen/test" }] });
     expect(provider.invokeConfiguredModel).toHaveBeenCalledWith(expect.objectContaining({ userId: 7, providerId: "openrouter", modelId: "openrouter/free", messages: expect.arrayContaining([
       { role: "system", content: "Be concise and write TypeScript." },
-      { role: "system", content: expect.stringContaining("Fast response profile is active") },
+      { role: "system", content: expect.stringContaining("Answer directly") },
       { role: "user", content: "Write a function" },
     ]) }));
     expect(db.appendConversationMessage).toHaveBeenLastCalledWith(expect.objectContaining({ role: "assistant", status: "completed", providerId: "openrouter", modelId: "openrouter/free", totalTokens: 22 }));

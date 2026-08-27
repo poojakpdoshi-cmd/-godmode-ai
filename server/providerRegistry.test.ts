@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildProviderCompletionPayload, canUseRespanFallback, CallableModel, describeProviderRequestFailure, describeProviderTransportFailure, isTextChatCapableModel, isVerifiedFreeOpenRouterModel, MODEL_REGISTRY_TTL_MS, prioritizeDefaultFastestModels, prioritizeFastFreeModels, ProviderDiagnostic, retainCallableModels, selectManagedFastModels, shouldUseRespanFallback } from "./providerRegistry";
+import { buildProviderCompletionPayload, canUseRespanFallback, CallableModel, completionTokenLimit, describeProviderRequestFailure, describeProviderTransportFailure, isTextChatCapableModel, isVerifiedFreeOpenRouterModel, MODEL_REGISTRY_TTL_MS, prioritizeDefaultFastestModels, prioritizeFastFreeModels, ProviderDiagnostic, retainCallableModels, selectManagedFastModels, shouldUseRespanFallback } from "./providerRegistry";
 
 const models: CallableModel[] = [
   { key: "platform:callable", providerId: "platform", providerName: "Platform catalog", modelId: "callable", displayName: "Callable", supportsTools: false, supportsVision: false, inputTypes: ["text"] },
@@ -45,9 +45,15 @@ describe("configured model registry", () => {
   it("uses the native web search tool only when research mode is requested", () => {
     const standard = buildProviderCompletionPayload({ providerId: "openrouter", modelId: "openrouter/free", messages: [{ role: "user", content: "hello" }] });
     const research = buildProviderCompletionPayload({ providerId: "openrouter", modelId: "openrouter/free", messages: [{ role: "user", content: "latest news" }], research: true });
-    expect(standard.max_completion_tokens).toBe(180);
+    expect(standard.max_completion_tokens).toBe(96);
     expect(standard).not.toHaveProperty("tools");
     expect(research).toMatchObject({ provider: { sort: "latency" }, tools: [{ type: "openrouter:web_search", parameters: { engine: "native", max_results: 3 } }] });
+  });
+
+  it("uses a lower completion ceiling only for ordinary short tasks, not research or detailed requests", () => {
+    expect(completionTokenLimit([{ role: "user", content: "What is HTTP?" }])).toBe(96);
+    expect(completionTokenLimit([{ role: "user", content: "Explain the architecture trade-offs in ".repeat(12) }])).toBe(180);
+    expect(completionTokenLimit([{ role: "user", content: "What changed today?" }], true)).toBe(180);
   });
 
   it("prioritizes known fast free-model families before an arbitrary catalog order", () => {
