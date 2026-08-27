@@ -12,7 +12,8 @@ const MAX_FAST_HISTORY_CHARACTERS = 8_000;
 const MAX_SHORT_TASK_HISTORY_MESSAGES = 2;
 const MAX_SHORT_TASK_HISTORY_CHARACTERS = 1_200;
 const SHORT_TASK_CHARACTER_LIMIT = 280;
-const FAST_RESPONSE_POLICY = "Answer directly. Be concise; do not restate the request. Use more detail only when asked. For code, use complete fenced code blocks so downloadable files can be created.";
+const FAST_RESPONSE_POLICY = "Answer directly. Be concise; do not restate the request. Use more detail only when asked.";
+const CODE_FAST_RESPONSE_POLICY = `${FAST_RESPONSE_POLICY} For code, use complete fenced code blocks so downloadable files can be created.`;
 const FAST_POLICY_CHARACTER_LIMIT = 360;
 
 export function validateChatSelections(mode: ChatMode, selections: ChatSelection[]) {
@@ -33,6 +34,10 @@ export function isShortTask(content: string) {
   return content.replace(/\s+/g, " ").trim().length <= SHORT_TASK_CHARACTER_LIMIT;
 }
 
+export function isCodingTask(content: string) {
+  return /\b(code|function|component|script|program|file|typescript|javascript|python|java|sql)\b/i.test(content);
+}
+
 export function buildProviderMessages(systemPrompt: string | null, messages: Array<{ role: string; content: string; status: string }>, fast = true): ProviderMessage[] {
   const activePolicy = compileExecutionPolicy(systemPrompt, fast);
   const completed = messages.filter(message => message.status === "completed" && (message.role === "user" || message.role === "assistant"));
@@ -50,7 +55,7 @@ export function buildProviderMessages(systemPrompt: string | null, messages: Arr
   }
   return [
     ...(activePolicy ? [{ role: "system" as const, content: activePolicy }] : []),
-    ...(fast ? [{ role: "system" as const, content: FAST_RESPONSE_POLICY }] : []),
+    ...(fast ? [{ role: "system" as const, content: isCodingTask(latestUserContent) ? CODE_FAST_RESPONSE_POLICY : FAST_RESPONSE_POLICY }] : []),
     ...recentTurns,
   ];
 }
@@ -105,14 +110,14 @@ export async function sendChatMessage(input: { userId: number; conversationId: s
 export async function prepareStreamedChat(input: { userId: number; conversationId: string; content: string; selection: ChatSelection; attachmentIds?: string[] }) {
   const conversation = await db.getConversationForUser(input.userId, input.conversationId);
   if (!conversation) throw new Error("Conversation not found.");
-  if (input.selection.providerId !== "openrouter") throw new Error("Fast streaming currently requires OpenRouter routing.");
-  const selection: ChatSelection = { providerId: "openrouter", modelId: "openrouter/free" };
+  if (input.selection.providerId !== "openrouter" && input.selection.providerId !== "nvidia") throw new Error("Fast streaming currently requires OpenRouter or NVIDIA NIM routing.");
+  const selection: ChatSelection = input.selection.providerId === "openrouter" ? { providerId: "openrouter", modelId: "openrouter/free" } : input.selection;
   await db.updateConversationConfiguration({ userId: input.userId, conversationId: conversation.id, mode: "solo", selectedModels: JSON.stringify([input.selection]) });
   const userMessage = await db.appendConversationMessage({ userId: input.userId, conversationId: conversation.id, role: "user", content: input.content.trim() });
   const attachments = await db.bindConversationAttachments({ userId: input.userId, conversationId: conversation.id, messageId: userMessage.id, attachmentIds: input.attachmentIds });
   if (conversation.title === "New conversation") await db.updateConversationTitle(input.userId, conversation.id, titleFromMessage(input.content));
   const history = await db.listConversationMessages(input.userId, conversation.id);
-  return { conversationId: conversation.id, userMessageId: userMessage.id, selection, respanFallbackEnabled: conversation.respanFallback === "yes", messages: addAttachmentContext(buildProviderMessages(conversation.systemPrompt, history, true), attachments.map(summarizeAttachment)) };
+  return { conversationId: conversation.id, userMessageId: userMessage.id, selection, respanFallbackEnabled: input.selection.providerId === "openrouter" && conversation.respanFallback === "yes", messages: addAttachmentContext(buildProviderMessages(conversation.systemPrompt, history, true), attachments.map(summarizeAttachment)) };
 }
 
 export async function persistStreamedAssistantMessage(input: { userId: number; conversationId: string; userMessageId: string; selection: ChatSelection; output: string; firstTokenMs: number | null; latencyMs: number; usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number } }) {

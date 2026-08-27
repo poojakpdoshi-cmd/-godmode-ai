@@ -8,7 +8,7 @@ import { executeMission, retryRun, validateRunPlan } from "../orchestration";
 import { clearModelRegistryCache, connectProvider, disconnectProvider, getModelRegistry, ProviderId } from "../providerRegistry";
 import { protectedProcedure, router } from "../_core/trpc";
 
-const providerIdSchema = z.enum(["platform", "openrouter", "respan"]);
+const providerIdSchema = z.enum(["platform", "openrouter", "respan", "nvidia"]);
 const selectedModelSchema = z.object({ providerId: providerIdSchema, modelId: z.string().min(1).max(255) });
 const attachmentIdSchema = z.string().min(1).max(36);
 
@@ -20,8 +20,8 @@ function requireValue<T>(value: T | undefined, code: "NOT_FOUND" | "BAD_REQUEST"
 export const godmodeRouter = router({
   providers: router({
     list: protectedProcedure.query(({ ctx }) => getModelRegistry(ctx.user.id, { verifyOpenRouterAccess: true })),
-    connect: protectedProcedure.input(z.object({ providerId: z.enum(["openrouter", "respan"]), apiKey: z.string().trim().min(8).max(1_000) })).mutation(({ ctx, input }) => connectProvider(ctx.user.id, input.providerId, input.apiKey)),
-    disconnect: protectedProcedure.input(z.object({ providerId: z.enum(["openrouter", "respan"]) })).mutation(({ ctx, input }) => disconnectProvider(ctx.user.id, input.providerId)),
+    connect: protectedProcedure.input(z.object({ providerId: z.enum(["openrouter", "respan", "nvidia"]), apiKey: z.string().trim().min(8).max(1_000) })).mutation(({ ctx, input }) => connectProvider(ctx.user.id, input.providerId, input.apiKey)),
+    disconnect: protectedProcedure.input(z.object({ providerId: z.enum(["openrouter", "respan", "nvidia"]) })).mutation(({ ctx, input }) => disconnectProvider(ctx.user.id, input.providerId)),
     refresh: protectedProcedure.mutation(({ ctx }) => { clearModelRegistryCache(ctx.user.id); return getModelRegistry(ctx.user.id, { force: true, verifyOpenRouterAccess: true }); }),
   }),
   models: router({

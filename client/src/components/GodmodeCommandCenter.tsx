@@ -35,7 +35,7 @@ import { FormEvent, lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 type View = "mission" | "operations" | "providers";
-type SelectedModel = { providerId: "platform" | "openrouter" | "respan"; modelId: string };
+type SelectedModel = { providerId: "platform" | "openrouter" | "respan" | "nvidia"; modelId: string };
 
 const navItems: Array<{ id: View; label: string; icon: typeof Command }> = [
   { id: "mission", label: "Mission Control", icon: Command },

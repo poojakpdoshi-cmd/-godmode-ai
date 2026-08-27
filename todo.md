@@ -93,3 +93,7 @@
 - [x] Add authenticated image and document attachments to conversations with secure server-side storage and provider-safe handling.
 - [x] Add regression tests for generated-file ownership, upload validation, download access, and attachment persistence.
 - [x] Rewrite public GitHub history to remove Manus-authored contributor attribution, force-push the cleaned main branch, and verify the public contributor state. GitHub stats now report only poojakpdoshi-cmd; the legacy contributors endpoint remains stale.
+- [x] Add a separate encrypted NVIDIA NIM API-key connection with live model and inference eligibility verification, user-visible routing, and truthful development/prototyping usage labeling.
+- [x] Reduce remaining short-task token usage further through request-budget controls without silently truncating required user instructions.
+- [x] Add regression coverage for NVIDIA key isolation, inference eligibility, routing, and the revised compact request budget.
+- [ ] Live-verify the NVIDIA NIM connection and selected-model response after the user connects their key in the app.

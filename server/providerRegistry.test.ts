@@ -45,15 +45,23 @@ describe("configured model registry", () => {
   it("uses the native web search tool only when research mode is requested", () => {
     const standard = buildProviderCompletionPayload({ providerId: "openrouter", modelId: "openrouter/free", messages: [{ role: "user", content: "hello" }] });
     const research = buildProviderCompletionPayload({ providerId: "openrouter", modelId: "openrouter/free", messages: [{ role: "user", content: "latest news" }], research: true });
-    expect(standard.max_completion_tokens).toBe(96);
+    expect(standard.max_completion_tokens).toBe(64);
     expect(standard).not.toHaveProperty("tools");
     expect(research).toMatchObject({ provider: { sort: "latency" }, tools: [{ type: "openrouter:web_search", parameters: { engine: "native", max_results: 3 } }] });
   });
 
   it("uses a lower completion ceiling only for ordinary short tasks, not research or detailed requests", () => {
-    expect(completionTokenLimit([{ role: "user", content: "What is HTTP?" }])).toBe(96);
+    expect(completionTokenLimit([{ role: "user", content: "What is HTTP?" }])).toBe(64);
+    expect(completionTokenLimit([{ role: "user", content: "Write a TypeScript function" }])).toBe(180);
     expect(completionTokenLimit([{ role: "user", content: "Explain the architecture trade-offs in ".repeat(12) }])).toBe(180);
     expect(completionTokenLimit([{ role: "user", content: "What changed today?" }], true)).toBe(180);
+  });
+
+  it("uses the same compact completion budget for NVIDIA NIM without OpenRouter routing fields", () => {
+    const payload = buildProviderCompletionPayload({ providerId: "nvidia", modelId: "nvidia/nemotron-3-nano-30b-a3b", messages: [{ role: "user", content: "Say hello" }] });
+    expect(payload).toMatchObject({ model: "nvidia/nemotron-3-nano-30b-a3b", max_tokens: 64, max_completion_tokens: 64 });
+    expect(payload).not.toHaveProperty("provider");
+    expect(payload).not.toHaveProperty("tools");
   });
 
   it("prioritizes known fast free-model families before an arbitrary catalog order", () => {

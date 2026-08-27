@@ -17,7 +17,7 @@ vi.mock("./db", () => db);
 vi.mock("./providerRegistry", () => provider);
 vi.mock("./chatArtifacts", () => artifacts);
 
-import { buildProviderMessages, compileExecutionPolicy, isShortTask, persistStreamedAssistantMessage, prepareStreamedChat, retryChatMessage, sendChatMessage } from "./chatService";
+import { buildProviderMessages, compileExecutionPolicy, isCodingTask, isShortTask, persistStreamedAssistantMessage, prepareStreamedChat, retryChatMessage, sendChatMessage } from "./chatService";
 
 const conversation = { id: "conversation-1", userId: 7, title: "New conversation", systemPrompt: "Be concise and write TypeScript.", mode: "solo" as const, selectedModels: "[]", respanFallback: "no" as const };
 
@@ -73,6 +73,9 @@ describe("chat execution service", () => {
     const providerMessages = buildProviderMessages("Use a friendly tone.", [{ role: "user", content: "Explain this", status: "completed" }]);
     expect(providerMessages[0]).toEqual({ role: "system", content: "Use a friendly tone." });
     expect(providerMessages[1]?.content).toContain("Answer directly");
+    expect(providerMessages[1]?.content).not.toContain("fenced code blocks");
+    expect(isCodingTask("Write a TypeScript function")).toBe(true);
+    expect(buildProviderMessages(null, [{ role: "user", content: "Write a TypeScript function", status: "completed" }])[0]?.content).toContain("fenced code blocks");
   });
 
   it("compiles an oversized saved prompt into a deterministic compact fast-execution policy", () => {
@@ -97,6 +100,12 @@ describe("chat execution service", () => {
     db.getConversationForUser.mockResolvedValueOnce({ ...conversation, respanFallback: "yes" });
     const plan = await prepareStreamedChat({ userId: 7, conversationId: conversation.id, content: "Stream hello", selection: { providerId: "openrouter", modelId: "cohere/north-mini-code:free" } });
     expect(plan.respanFallbackEnabled).toBe(true);
+  });
+
+  it("keeps a selected NVIDIA NIM stream on NVIDIA and never authorizes the OpenRouter-to-Respan fallback path", async () => {
+    const plan = await prepareStreamedChat({ userId: 7, conversationId: conversation.id, content: "Explain HTTP", selection: { providerId: "nvidia", modelId: "nvidia/nemotron-3-nano-30b-a3b" } });
+    expect(plan.selection).toEqual({ providerId: "nvidia", modelId: "nvidia/nemotron-3-nano-30b-a3b" });
+    expect(plan.respanFallbackEnabled).toBe(false);
   });
 
   it("persists first-token time separately from total streamed completion time", async () => {

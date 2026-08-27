@@ -2,7 +2,7 @@ import * as db from "./db";
 import { decryptProviderKey, encryptProviderKey } from "./providerSecrets";
 import { invokeLLM, listLLMModels } from "./_core/llm";
 
-export type ProviderId = "platform" | "openrouter" | "respan";
+export type ProviderId = "platform" | "openrouter" | "respan" | "nvidia";
 export type ProviderMessage = { role: "system" | "user" | "assistant"; content: string };
 export type CallableModel = { key: string; providerId: ProviderId; providerName: string; modelId: string; displayName: string; contextLength?: number; supportsTools: boolean; supportsVision: boolean; inputTypes: string[] };
 export type ProviderDiagnostic = { providerId: ProviderId; providerName: string; configured: boolean; healthy: boolean; modelCount: number; checkedAt: number; error?: string; credentialStored?: boolean };
@@ -13,11 +13,13 @@ type CompatibleModel = { id: string; name?: string; context_length?: number; sup
 const PROVIDERS = {
   openrouter: { name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1" },
   respan: { name: "Respan", baseUrl: "https://api.respan.ai/api" },
+  nvidia: { name: "NVIDIA NIM", baseUrl: "https://integrate.api.nvidia.com/v1" },
 } as const;
 const cache = new Map<number, { expiresAt: number; registry: ModelRegistry }>();
 const openRouterEligibilityCache = new Map<number, number>();
 export const MODEL_REGISTRY_TTL_MS = 10 * 60_000;
 const REQUEST_TIMEOUT_MS = 35_000;
+const MICRO_COMPLETION_TOKEN_LIMIT = 64;
 const SHORT_COMPLETION_TOKEN_LIMIT = 96;
 const FAST_COMPLETION_TOKEN_LIMIT = 180;
 const FAST_ROUTE_FIRST_TEXT_TIMEOUT_MS = 2_750;
@@ -47,6 +49,21 @@ async function verifyOpenRouterFreeAccess(apiKey: string) {
   try { await response.body?.cancel(); } catch { /* Body is already settled. */ }
 }
 
+async function verifyNvidiaInferenceAccess(apiKey: string, modelId: string) {
+  let response: Response;
+  try {
+    response = await fetch(`${PROVIDERS.nvidia.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: modelId, messages: [{ role: "user", content: "Reply with OK." }], max_tokens: 1, max_completion_tokens: 1 }),
+    });
+  } catch (error) {
+    throw new Error(describeProviderTransportFailure(PROVIDERS.nvidia.name, error));
+  }
+  if (!response.ok) throw new Error(describeProviderRequestFailure(PROVIDERS.nvidia.name, response.status, await response.text()));
+  try { await response.body?.cancel(); } catch { /* Body is already settled. */ }
+}
+
 export function describeProviderRequestFailure(providerName: string, status: number, bodyText: string) {
   let upstreamMessage = "";
   try {
@@ -72,6 +89,8 @@ export function describeProviderTransportFailure(providerName: string, error: un
 export function completionTokenLimit(messages: ProviderMessage[], research = false) {
   if (research) return FAST_COMPLETION_TOKEN_LIMIT;
   const latestUserContent = [...messages].reverse().find(message => message.role === "user")?.content.replace(/\s+/g, " ").trim() ?? "";
+  if (/\b(code|function|component|script|program|file|typescript|javascript|python|java|sql)\b/i.test(latestUserContent)) return FAST_COMPLETION_TOKEN_LIMIT;
+  if (latestUserContent.length <= 120) return MICRO_COMPLETION_TOKEN_LIMIT;
   return latestUserContent.length <= 280 ? SHORT_COMPLETION_TOKEN_LIMIT : FAST_COMPLETION_TOKEN_LIMIT;
 }
 
@@ -211,7 +230,7 @@ export function isTextChatCapableModel(model: CompatibleModel) {
   return (!inputModalities || inputModalities.includes("text")) && (!outputModalities || (outputModalities.includes("text") && outputModalities.every(modality => modality === "text")));
 }
 
-async function compatibleModels(providerId: "openrouter" | "respan", apiKey: string) {
+async function compatibleModels(providerId: "openrouter" | "respan" | "nvidia", apiKey: string) {
   const provider = PROVIDERS[providerId];
   const response = await fetch(`${cleanBaseUrl(provider.baseUrl)}/models`, { headers: { authorization: `Bearer ${apiKey}` } });
   if (!response.ok) throw new Error(`${provider.name} model discovery failed with HTTP ${response.status}`);
@@ -243,7 +262,7 @@ export async function getModelRegistry(userId: number, options: { force?: boolea
     diagnostics.push({ providerId: "platform", providerName: "GODMODE Managed Fast", configured: false, healthy: false, modelCount: 0, checkedAt, error: safeError(error) });
   }
   const configurations = await db.listProviderConfigurations(userId);
-  for (const providerId of ["openrouter", "respan"] as const) {
+  for (const providerId of ["openrouter", "respan", "nvidia"] as const) {
     const configuration = configurations.find(item => item.providerId === providerId && item.isEnabled === "yes" && item.credentialEncrypted);
     if (!configuration?.credentialEncrypted) {
       diagnostics.push({ providerId, providerName: PROVIDERS[providerId].name, configured: false, healthy: false, modelCount: 0, checkedAt, credentialStored: false, error: `No ${PROVIDERS[providerId].name} key is connected for this user.` });
@@ -303,16 +322,17 @@ export function clearModelRegistryCache(userId?: number) {
   else { cache.delete(userId); openRouterEligibilityCache.delete(userId); }
 }
 
-export async function connectProvider(userId: number, providerId: "openrouter" | "respan", apiKey: string) {
+export async function connectProvider(userId: number, providerId: "openrouter" | "respan" | "nvidia", apiKey: string) {
   if (providerId === "openrouter") await verifyOpenRouterFreeAccess(apiKey.trim());
   const discovered = await compatibleModels(providerId, apiKey.trim());
   if (!discovered.length) throw new Error(`${PROVIDERS[providerId].name} did not expose any callable models for this key.`);
+  if (providerId === "nvidia") await verifyNvidiaInferenceAccess(apiKey.trim(), discovered[0].modelId);
   await db.upsertProviderConfiguration({ userId, providerId, displayName: PROVIDERS[providerId].name, credentialEncrypted: encryptProviderKey(apiKey) });
   clearModelRegistryCache(userId);
   return getModelRegistry(userId, { force: true });
 }
 
-export async function disconnectProvider(userId: number, providerId: "openrouter" | "respan") {
+export async function disconnectProvider(userId: number, providerId: "openrouter" | "respan" | "nvidia") {
   await db.disableProviderConfiguration(userId, providerId);
   clearModelRegistryCache(userId);
   return getModelRegistry(userId, { force: true });
