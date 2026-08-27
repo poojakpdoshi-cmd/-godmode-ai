@@ -180,6 +180,26 @@ export const conversationMessages = mysqlTable(
   ]
 );
 
+export const conversationAttachments = mysqlTable(
+  "conversationAttachments",
+  {
+    id: varchar("id", { length: 36 }).primaryKey(),
+    conversationId: varchar("conversationId", { length: 36 }).notNull().references(() => conversations.id, { onDelete: "cascade" }),
+    messageId: varchar("messageId", { length: 36 }).references(() => conversationMessages.id, { onDelete: "cascade" }),
+    userId: int("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+    kind: mysqlEnum("kind", ["upload", "generated_code"]).notNull(),
+    fileName: varchar("fileName", { length: 255 }).notNull(),
+    mimeType: varchar("mimeType", { length: 120 }).notNull(),
+    sizeBytes: int("sizeBytes").notNull(),
+    storageKey: varchar("storageKey", { length: 512 }).notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  table => [
+    index("conversation_attachments_message_idx").on(table.messageId, table.createdAt),
+    index("conversation_attachments_user_conversation_idx").on(table.userId, table.conversationId, table.createdAt),
+  ]
+);
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type Project = typeof projects.$inferSelect;
@@ -188,3 +208,4 @@ export type ExecutionRun = typeof executionRuns.$inferSelect;
 export type ExecutionEvent = typeof executionEvents.$inferSelect;
 export type Conversation = typeof conversations.$inferSelect;
 export type ConversationMessage = typeof conversationMessages.$inferSelect;
+export type ConversationAttachment = typeof conversationAttachments.$inferSelect;

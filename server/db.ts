@@ -1,10 +1,11 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { nanoid } from "nanoid";
 import {
   executionEvents,
   executionRuns,
   InsertUser,
+  conversationAttachments,
   conversationMessages,
   conversations,
   missions,
@@ -330,6 +331,52 @@ export async function appendConversationMessage(input: {
   return message;
 }
 
+export async function createConversationAttachment(input: { userId: number; conversationId: string; kind: "upload" | "generated_code"; fileName: string; mimeType: string; sizeBytes: number; storageKey: string; messageId?: string }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is unavailable");
+  const conversation = await getConversationForUser(input.userId, input.conversationId);
+  if (!conversation) throw new Error("Conversation not found.");
+  if (input.messageId) {
+    const message = await getConversationMessageForUser(input.userId, input.messageId);
+    if (!message || message.conversationId !== conversation.id) throw new Error("Conversation message not found.");
+  }
+  const attachment = { id: id(), userId: input.userId, conversationId: conversation.id, messageId: input.messageId ?? null, kind: input.kind, fileName: input.fileName, mimeType: input.mimeType, sizeBytes: input.sizeBytes, storageKey: input.storageKey, createdAt: new Date() };
+  await db.insert(conversationAttachments).values(attachment);
+  return attachment;
+}
+
+export async function bindConversationAttachments(input: { userId: number; conversationId: string; messageId: string; attachmentIds?: string[] }) {
+  const attachmentIds = Array.from(new Set(input.attachmentIds ?? []));
+  if (!attachmentIds.length) return [];
+  const db = await getDb();
+  if (!db) throw new Error("Database is unavailable");
+  const attachments = await db.select().from(conversationAttachments).where(and(eq(conversationAttachments.userId, input.userId), eq(conversationAttachments.conversationId, input.conversationId), inArray(conversationAttachments.id, attachmentIds), isNull(conversationAttachments.messageId)));
+  if (attachments.length !== attachmentIds.length) throw new Error("One or more attachments are unavailable or already sent.");
+  await db.update(conversationAttachments).set({ messageId: input.messageId }).where(and(eq(conversationAttachments.userId, input.userId), eq(conversationAttachments.conversationId, input.conversationId), inArray(conversationAttachments.id, attachmentIds), isNull(conversationAttachments.messageId)));
+  return attachments;
+}
+
+export async function removePendingConversationAttachment(userId: number, attachmentId: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is unavailable");
+  const attachment = (await db.select().from(conversationAttachments).where(and(eq(conversationAttachments.id, attachmentId), eq(conversationAttachments.userId, userId), isNull(conversationAttachments.messageId))).limit(1))[0];
+  if (!attachment) return false;
+  await db.delete(conversationAttachments).where(eq(conversationAttachments.id, attachment.id));
+  return true;
+}
+
+export async function getConversationAttachmentForUser(userId: number, attachmentId: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  return (await db.select().from(conversationAttachments).where(and(eq(conversationAttachments.id, attachmentId), eq(conversationAttachments.userId, userId))).limit(1))[0];
+}
+
+export async function listConversationAttachments(userId: number, conversationId: string) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(conversationAttachments).where(and(eq(conversationAttachments.userId, userId), eq(conversationAttachments.conversationId, conversationId))).orderBy(asc(conversationAttachments.createdAt));
+}
+
 export async function listConversationMessages(userId: number, conversationId: string) {
   const db = await getDb();
   if (!db) return [];
@@ -346,5 +393,6 @@ export async function getConversationDetail(userId: number, conversationId: stri
   const conversation = await getConversationForUser(userId, conversationId);
   if (!conversation) return undefined;
   const messages = await listConversationMessages(userId, conversationId);
-  return { conversation, messages };
+  const attachments = await listConversationAttachments(userId, conversationId);
+  return { conversation, messages, attachments };
 }

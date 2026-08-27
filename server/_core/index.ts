@@ -13,6 +13,8 @@ import { ENV } from "./env";
 import { getOrCreateLocalUser } from "../db";
 import { prepareStreamedChat, persistStreamedAssistantMessage, persistStreamedFailure } from "../chatService";
 import { canUseRespanFallback, getFastFreeCandidates, getRespanFallbackModel, streamConfiguredModel } from "../providerRegistry";
+import { requireDownloadableConversationAttachment, sanitizeFileName } from "../chatArtifacts";
+import { storageGetSignedUrl } from "../storage";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -41,11 +43,31 @@ async function startServer() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   registerStorageProxy(app);
   registerOAuthRoutes(app);
+  app.get("/api/godmode/attachments/:attachmentId/download", async (req, res) => {
+    const user = ENV.localMode ? await getOrCreateLocalUser().catch(() => null) : await sdk.authenticateRequest(req).catch(() => null);
+    if (!user) { res.status(401).json({ error: "Authentication required." }); return; }
+    const attachment = await requireDownloadableConversationAttachment(user.id, req.params.attachmentId).catch(() => undefined);
+    if (!attachment) { res.status(404).json({ error: "Attachment not found." }); return; }
+    try {
+      const upstream = await fetch(await storageGetSignedUrl(attachment.storageKey));
+      if (!upstream.ok) throw new Error("Stored attachment could not be read.");
+      const bytes = Buffer.from(await upstream.arrayBuffer());
+      res.setHeader("Content-Type", attachment.mimeType);
+      res.setHeader("Content-Length", String(bytes.length));
+      const disposition = attachment.mimeType.startsWith("image/") && req.query.inline === "1" ? "inline" : "attachment";
+      res.setHeader("Content-Disposition", `${disposition}; filename="${sanitizeFileName(attachment.fileName).replace(/"/g, "")}"`);
+      res.status(200).send(bytes);
+    } catch {
+      res.status(502).json({ error: "The stored attachment is temporarily unavailable. Retry the download." });
+    }
+  });
   app.post("/api/godmode/stream", async (req, res) => {
     const user = ENV.localMode ? await getOrCreateLocalUser().catch(() => null) : await sdk.authenticateRequest(req).catch(() => null);
     if (!user) { res.status(401).json({ error: "Authentication required." }); return; }
-    const input = req.body as { conversationId?: string; content?: string; selection?: { providerId?: string; modelId?: string } };
+    const input = req.body as { conversationId?: string; content?: string; attachmentIds?: unknown; selection?: { providerId?: string; modelId?: string } };
     if (!input.conversationId || !input.content?.trim() || input.content.length > 32_000 || input.selection?.providerId !== "openrouter" || !input.selection.modelId) { res.status(400).json({ error: "Invalid streaming chat request." }); return; }
+    const attachmentIds = Array.isArray(input.attachmentIds) && input.attachmentIds.length <= 6 && input.attachmentIds.every(id => typeof id === "string" && id.length > 0 && id.length <= 36) ? input.attachmentIds : undefined;
+    if (input.attachmentIds !== undefined && !attachmentIds) { res.status(400).json({ error: "Invalid attachment list." }); return; }
     res.status(200);
     res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
     res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -55,7 +77,7 @@ async function startServer() {
     let plan: Awaited<ReturnType<typeof prepareStreamedChat>> | null = null;
     let startedAt = Date.now();
     try {
-      plan = await prepareStreamedChat({ userId: user.id, conversationId: input.conversationId, content: input.content, selection: { providerId: "openrouter", modelId: input.selection.modelId } });
+      plan = await prepareStreamedChat({ userId: user.id, conversationId: input.conversationId, content: input.content, attachmentIds, selection: { providerId: "openrouter", modelId: input.selection.modelId } });
       let result: Awaited<ReturnType<typeof streamConfiguredModel>> | null = null;
       let firstTokenMs: number | null = null;
       let finalSelection: { providerId: "openrouter" | "respan"; modelId: string } = { providerId: "openrouter", modelId: "openrouter/free" };

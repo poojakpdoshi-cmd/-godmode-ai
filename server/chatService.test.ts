@@ -4,15 +4,18 @@ const db = vi.hoisted(() => ({
   getConversationForUser: vi.fn(),
   updateConversationConfiguration: vi.fn(),
   appendConversationMessage: vi.fn(),
+  bindConversationAttachments: vi.fn(),
   updateConversationTitle: vi.fn(),
   listConversationMessages: vi.fn(),
   getConversationDetail: vi.fn(),
   getConversationMessageForUser: vi.fn(),
 }));
 const provider = vi.hoisted(() => ({ assertOpenRouterFreeAccess: vi.fn(), requireCallableModel: vi.fn(), invokeConfiguredModel: vi.fn() }));
+const artifacts = vi.hoisted(() => ({ attachmentContext: vi.fn(() => "\n\nAttached files for this conversation message:\n- design.png (image/png, 42 bytes)"), createGeneratedCodeArtifacts: vi.fn().mockResolvedValue([]), summarizeAttachment: vi.fn((attachment: unknown) => attachment) }));
 
 vi.mock("./db", () => db);
 vi.mock("./providerRegistry", () => provider);
+vi.mock("./chatArtifacts", () => artifacts);
 
 import { buildProviderMessages, compileExecutionPolicy, isShortTask, persistStreamedAssistantMessage, prepareStreamedChat, retryChatMessage, sendChatMessage } from "./chatService";
 
@@ -22,7 +25,11 @@ describe("chat execution service", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     db.getConversationForUser.mockResolvedValue(conversation);
-    db.appendConversationMessage.mockResolvedValueOnce({ id: "user-message-1" });
+    db.appendConversationMessage.mockImplementation(async (input: { role: string; content: string }) => ({ id: input.role === "user" ? "user-message-1" : "assistant-message-1", ...input }));
+    db.bindConversationAttachments.mockResolvedValue([]);
+    artifacts.attachmentContext.mockReturnValue("\n\nAttached files for this conversation message:\n- design.png (image/png, 42 bytes)");
+    artifacts.summarizeAttachment.mockImplementation((attachment: unknown) => attachment);
+    artifacts.createGeneratedCodeArtifacts.mockResolvedValue([]);
     db.listConversationMessages.mockResolvedValue([{ id: "user-message-1", role: "user", content: "Write a function", status: "completed" }]);
     db.getConversationDetail.mockResolvedValue({ conversation, messages: [] });
     provider.assertOpenRouterFreeAccess.mockResolvedValue({});
@@ -106,6 +113,16 @@ describe("chat execution service", () => {
       { role: "user", content: "Write a function" },
     ]) }));
     expect(db.appendConversationMessage).toHaveBeenLastCalledWith(expect.objectContaining({ role: "assistant", status: "completed", providerId: "openrouter", modelId: "openrouter/free", totalTokens: 22 }));
+  });
+
+  it("binds only supplied pending attachments to the new user message and sends safe file metadata to the provider", async () => {
+    const attachment = { id: "attachment-1", messageId: null, kind: "upload", fileName: "design.png", mimeType: "image/png", sizeBytes: 42, createdAt: new Date() };
+    db.bindConversationAttachments.mockResolvedValueOnce([attachment]);
+    db.listConversationMessages.mockResolvedValueOnce([{ id: "user-message-1", role: "user", content: "Review this image", status: "completed" }]);
+    provider.invokeConfiguredModel.mockResolvedValue({ output: "I can see the attachment record.", usage: { totalTokens: 8 } });
+    await sendChatMessage({ userId: 7, conversationId: conversation.id, content: "Review this image", attachmentIds: [attachment.id], mode: "solo", selections: [{ providerId: "openrouter", modelId: "qwen/test" }] });
+    expect(db.bindConversationAttachments).toHaveBeenCalledWith({ userId: 7, conversationId: conversation.id, messageId: "user-message-1", attachmentIds: [attachment.id] });
+    expect(provider.invokeConfiguredModel).toHaveBeenCalledWith(expect.objectContaining({ messages: expect.arrayContaining([{ role: "user", content: expect.stringContaining("design.png") }]) }));
   });
 
   it("never auto-routes direct or research chat to Respan even when a conversation has fallback consent", async () => {

@@ -1,6 +1,8 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import * as db from "../db";
+import { MAX_CHAT_ATTACHMENT_BYTES, normalizeChatAttachmentMime, sanitizeFileName, summarizeAttachment } from "../chatArtifacts";
+import { storagePut } from "../storage";
 import { retryChatMessage, sendChatMessage, validateChatSelections } from "../chatService";
 import { executeMission, retryRun, validateRunPlan } from "../orchestration";
 import { clearModelRegistryCache, connectProvider, disconnectProvider, getModelRegistry, ProviderId } from "../providerRegistry";
@@ -8,6 +10,7 @@ import { protectedProcedure, router } from "../_core/trpc";
 
 const providerIdSchema = z.enum(["platform", "openrouter", "respan"]);
 const selectedModelSchema = z.object({ providerId: providerIdSchema, modelId: z.string().min(1).max(255) });
+const attachmentIdSchema = z.string().min(1).max(36);
 
 function requireValue<T>(value: T | undefined, code: "NOT_FOUND" | "BAD_REQUEST" = "NOT_FOUND"): T {
   if (!value) throw new TRPCError({ code, message: code === "NOT_FOUND" ? "The requested workspace record was not found." : "The request could not be completed." });
@@ -69,8 +72,20 @@ export const godmodeRouter = router({
       await db.updateConversationConfiguration({ userId: ctx.user.id, conversationId: input.conversationId, systemPrompt: input.systemPrompt, mode: input.mode, selectedModels: input.selections ? JSON.stringify(input.selections) : undefined, respanFallback: input.respanFallback });
       return requireValue(await db.getConversationDetail(ctx.user.id, input.conversationId));
     }),
-    send: protectedProcedure.input(z.object({ conversationId: z.string().min(1).max(36), content: z.string().trim().min(1).max(32_000), mode: z.enum(["solo", "competition"]), selections: z.array(selectedModelSchema).min(1).max(6), fast: z.boolean().optional(), research: z.boolean().optional() })).mutation(async ({ ctx, input }) => {
-      try { return await sendChatMessage({ userId: ctx.user.id, conversationId: input.conversationId, content: input.content, mode: input.mode, selections: input.selections as Array<{ providerId: ProviderId; modelId: string }>, fast: input.fast, research: input.research }); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Chat request failed." }); }
+    upload: protectedProcedure.input(z.object({ conversationId: z.string().min(1).max(36), fileName: z.string().min(1).max(255), mimeType: z.string().min(1).max(120), base64: z.string().min(1).max(14_000_000) })).mutation(async ({ ctx, input }) => {
+      requireValue(await db.getConversationForUser(ctx.user.id, input.conversationId));
+      const mimeType = normalizeChatAttachmentMime(input.fileName, input.mimeType);
+      if (!mimeType) throw new TRPCError({ code: "BAD_REQUEST", message: "This file type is not supported. Use PNG, JPG, WEBP, GIF, PDF, Office documents, text, Markdown, CSV, JSON, or common code files." });
+      const bytes = Buffer.from(input.base64, "base64");
+      if (!bytes.length || bytes.length > MAX_CHAT_ATTACHMENT_BYTES) throw new TRPCError({ code: "BAD_REQUEST", message: "Attachments must be between 1 byte and 10 MB." });
+      const fileName = sanitizeFileName(input.fileName);
+      const stored = await storagePut(`godmode/${ctx.user.id}/conversations/${input.conversationId}/uploads/${fileName}`, bytes, mimeType);
+      const attachment = await db.createConversationAttachment({ userId: ctx.user.id, conversationId: input.conversationId, kind: "upload", fileName, mimeType, sizeBytes: bytes.length, storageKey: stored.key });
+      return summarizeAttachment(attachment);
+    }),
+    removePendingAttachment: protectedProcedure.input(z.object({ attachmentId: attachmentIdSchema })).mutation(async ({ ctx, input }) => ({ removed: await db.removePendingConversationAttachment(ctx.user.id, input.attachmentId) })),
+    send: protectedProcedure.input(z.object({ conversationId: z.string().min(1).max(36), content: z.string().trim().min(1).max(32_000), mode: z.enum(["solo", "competition"]), selections: z.array(selectedModelSchema).min(1).max(6), attachmentIds: z.array(attachmentIdSchema).max(6).optional(), fast: z.boolean().optional(), research: z.boolean().optional() })).mutation(async ({ ctx, input }) => {
+      try { return await sendChatMessage({ userId: ctx.user.id, conversationId: input.conversationId, content: input.content, mode: input.mode, selections: input.selections as Array<{ providerId: ProviderId; modelId: string }>, attachmentIds: input.attachmentIds, fast: input.fast, research: input.research }); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Chat request failed." }); }
     }),
     retry: protectedProcedure.input(z.object({ messageId: z.string().min(1).max(36) })).mutation(async ({ ctx, input }) => {
       try { return await retryChatMessage({ userId: ctx.user.id, messageId: input.messageId }); } catch (error) { throw new TRPCError({ code: "BAD_REQUEST", message: error instanceof Error ? error.message : "Retry failed." }); }

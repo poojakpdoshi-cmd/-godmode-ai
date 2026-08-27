@@ -8,12 +8,17 @@ import {
   Clock3,
   Copy,
   Cpu,
+  Download,
+  FileCode2,
+  FileImage,
+  FileText,
   Gauge,
   KeyRound,
   Loader2,
   Menu,
   MessageSquarePlus,
   PanelRight,
+  Paperclip,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -44,6 +49,7 @@ const Streamdown = lazy(async () => {
 type ProviderId = "platform" | "openrouter" | "respan";
 type SelectedModel = { providerId: ProviderId; modelId: string };
 type ChatModel = { key: string; providerId: ProviderId; modelId: string; displayName: string; providerName: string; contextLength?: number | null };
+type ChatAttachment = { id: string; messageId: string | null; kind: "upload" | "generated_code"; fileName: string; mimeType: string; sizeBytes: number; createdAt: Date };
 const EMPTY_MODELS: ChatModel[] = [];
 
 function duration(value?: number | null) {
@@ -53,6 +59,26 @@ function duration(value?: number | null) {
 
 function firstName(value?: string | null) {
   return value?.trim().split(/\s+/)[0] || "Operator";
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function readFileAsBase64(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`Could not read ${file.name}.`));
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      const base64 = result.split(",", 2)[1];
+      if (!base64) reject(new Error(`Could not encode ${file.name}.`));
+      else resolve(base64);
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 function ProviderGlyph({ providerId }: { providerId: ProviderId }) {
@@ -78,6 +104,7 @@ export default function GodmodeChatWorkspace() {
   const [streamProviderId, setStreamProviderId] = useState<ProviderId>("openrouter");
   const [respanFallbackEnabled, setRespanFallbackEnabled] = useState(false);
   const [composer, setComposer] = useState("");
+  const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
   const [mode, setMode] = useState<"solo" | "competition">("solo");
   const [selectedModels, setSelectedModels] = useState<SelectedModel[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -85,6 +112,7 @@ export default function GodmodeChatWorkspace() {
   const [connectProvider, setConnectProvider] = useState<"openrouter" | "respan" | undefined>();
   const [apiKey, setApiKey] = useState("");
   const messageEnd = useRef<HTMLDivElement>(null);
+  const attachmentInput = useRef<HTMLInputElement>(null);
 
   const providerQuery = trpc.godmode.providers.list.useQuery(undefined, { enabled: Boolean(user), refetchInterval: 60_000 });
   const conversationQuery = trpc.godmode.chat.list.useQuery(undefined, { enabled: Boolean(user) });
@@ -93,6 +121,8 @@ export default function GodmodeChatWorkspace() {
   const createChat = trpc.godmode.chat.create.useMutation();
   const configureChat = trpc.godmode.chat.configure.useMutation();
   const sendChat = trpc.godmode.chat.send.useMutation();
+  const uploadAttachment = trpc.godmode.chat.upload.useMutation();
+  const removePendingAttachment = trpc.godmode.chat.removePendingAttachment.useMutation();
   const retryChat = trpc.godmode.chat.retry.useMutation();
   const attachProvider = trpc.godmode.providers.connect.useMutation();
   const detachProvider = trpc.godmode.providers.disconnect.useMutation();
@@ -103,7 +133,8 @@ export default function GodmodeChatWorkspace() {
   const respanConnected = diagnostics.some(item => item.providerId === "respan" && item.healthy);
   const conversation = detailQuery.data?.conversation;
   const messages = detailQuery.data?.messages ?? [];
-  const busy = sendChat.isPending || createChat.isPending || retryChat.isPending || isStreaming;
+  const attachments = detailQuery.data?.attachments ?? [];
+  const busy = sendChat.isPending || createChat.isPending || retryChat.isPending || uploadAttachment.isPending || isStreaming;
   const callableModelKeys = useMemo(() => new Set(models.map(model => `${model.providerId}:${model.modelId}`)), [models]);
   const measuredManagedFastModel = useMemo(() => ["claude-haiku-4-5", "gpt-5-mini", "gpt-5-nano"].flatMap(modelId => models.filter(model => model.providerId === "platform" && model.modelId === modelId))[0] || models.find(model => model.providerId === "platform"), [models]);
   const hasInvalidSelection = Boolean(selectedModels.length) && selectedModels.some(item => !callableModelKeys.has(`${item.providerId}:${item.modelId}`));
@@ -126,6 +157,8 @@ export default function GodmodeChatWorkspace() {
       setSelectedModels(parsed);
     } catch { setSelectedModels([]); }
   }, [conversation?.id]);
+
+  useEffect(() => { setPendingAttachments([]); }, [activeConversationId]);
 
   useEffect(() => {
     const sameSelections = (left: SelectedModel[], right: SelectedModel[]) => left.length === right.length && left.every((item, index) => item.providerId === right[index]?.providerId && item.modelId === right[index]?.modelId);
@@ -189,9 +222,31 @@ export default function GodmodeChatWorkspace() {
     } catch (error) { toast.error(error instanceof Error ? error.message : "Unable to save the fallback preference."); }
   }
 
+  async function queueAttachments(files: FileList | File[]) {
+    const selected = Array.from(files);
+    if (!selected.length || busy) return;
+    if (pendingAttachments.length + selected.length > 6) { toast.error("You can attach up to 6 files to one message."); return; }
+    const conversationId = activeConversationId || await openConversation();
+    if (!conversationId) return;
+    for (const file of selected) {
+      if (file.size > 10 * 1024 * 1024) { toast.error(`${file.name} is over the 10 MB attachment limit.`); continue; }
+      try {
+        const attachment = await uploadAttachment.mutateAsync({ conversationId, fileName: file.name, mimeType: file.type || "application/octet-stream", base64: await readFileAsBase64(file) });
+        setPendingAttachments(current => [...current, attachment as ChatAttachment]);
+      } catch (error) { toast.error(error instanceof Error ? error.message : `Could not attach ${file.name}.`); }
+    }
+  }
+
+  async function discardAttachment(attachmentId: string) {
+    try {
+      await removePendingAttachment.mutateAsync({ attachmentId });
+      setPendingAttachments(current => current.filter(attachment => attachment.id !== attachmentId));
+    } catch (error) { toast.error(error instanceof Error ? error.message : "Could not remove that attachment."); }
+  }
+
   async function submitMessage(event?: FormEvent) {
     event?.preventDefault();
-    const content = composer.trim();
+    const content = composer.trim() || (pendingAttachments.length ? "Please review the attached file(s)." : "");
     if (!content || busy) return;
     if (hasUnsavedPrompt) { toast.message("Save your system prompt first so the orchestrator uses the exact policy you wrote."); setSettingsOpen(true); return; }
     if (!models.length) { toast.error("Connect OpenRouter to load the currently available free models."); setSettingsOpen(true); return; }
@@ -200,18 +255,20 @@ export default function GodmodeChatWorkspace() {
     if (mode === "competition" && selectedModels.length < 2) { toast.error("Choose at least two callable models for comparison."); return; }
     const conversationId = activeConversationId || await openConversation();
     if (!conversationId) return;
+    const attachmentIds = pendingAttachments.map(attachment => attachment.id);
     setComposer("");
+    setPendingAttachments([]);
     try {
       if (mode === "solo" && !researchMode && selectedModels[0]?.providerId === "openrouter") {
         setIsStreaming(true); setStreamingContent(""); setStreamFirstTokenMs(null); setStreamStatus("Opening strict free fast route…"); setStreamModelId("OpenRouter free fast route"); setStreamProviderId("openrouter");
-        const response = await fetch("/api/godmode/stream", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ conversationId, content, selection: selectedModels[0] }) });
+        const response = await fetch("/api/godmode/stream", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ conversationId, content, attachmentIds, selection: selectedModels[0] }) });
         if (!response.ok || !response.body) throw new Error("The streaming route could not be opened. Retry once.");
         const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
         while (true) { const { value, done } = await reader.read(); if (done) break; buffer += decoder.decode(value, { stream: true }); let divider = buffer.indexOf("\n\n"); while (divider !== -1) { const event = buffer.slice(0, divider); buffer = buffer.slice(divider + 2); divider = buffer.indexOf("\n\n"); const type = event.match(/^event:\s*(.+)$/m)?.[1]; const payload = event.match(/^data:\s*(.+)$/m)?.[1]; if (!payload) continue; const parsed = JSON.parse(payload) as { chunk?: string; message?: string; firstTokenMs?: number; latencyMs?: number; modelId?: string; providerId?: ProviderId; attempt?: number; candidateCount?: number }; if (type === "meta") { if (parsed.modelId) setStreamModelId(parsed.modelId); if (parsed.providerId) setStreamProviderId(parsed.providerId); setStreamStatus(parsed.providerId === "respan" ? "Connected Respan fallback is responding…" : `Testing free model ${parsed.attempt ?? 1}/${parsed.candidateCount ?? 1}…`); } if (type === "status" && parsed.message) setStreamStatus(parsed.message); if (type === "first-token" && parsed.firstTokenMs !== undefined) { setStreamFirstTokenMs(parsed.firstTokenMs); setStreamStatus(parsed.providerId === "respan" ? "Receiving live Respan fallback response…" : "Receiving live response…"); } if (type === "delta" && parsed.chunk) setStreamingContent(current => current + parsed.chunk); if (type === "done") { if (parsed.providerId) setStreamProviderId(parsed.providerId); if (parsed.modelId) setStreamModelId(parsed.modelId); if (parsed.firstTokenMs !== null && parsed.firstTokenMs !== undefined) toast.success(`${parsed.providerId === "respan" ? "Respan fallback · " : ""}First text in ${(parsed.firstTokenMs / 1000).toFixed(1)}s · completed in ${((parsed.latencyMs ?? 0) / 1000).toFixed(1)}s`); } if (type === "error") throw new Error(parsed.message || "The streaming request failed."); } }
         setStreamingContent("");
         await Promise.all([utils.godmode.chat.list.invalidate(), utils.godmode.chat.detail.invalidate({ conversationId })]);
       } else {
-        const detail = await sendChat.mutateAsync({ conversationId, content, mode, selections: selectedModels, fast: true, research: researchMode });
+        const detail = await sendChat.mutateAsync({ conversationId, content, mode, selections: selectedModels, attachmentIds, fast: true, research: researchMode });
         setActiveConversationId(detail?.conversation.id);
         await Promise.all([utils.godmode.chat.list.invalidate(), utils.godmode.chat.detail.invalidate({ conversationId })]);
       }
@@ -261,12 +318,19 @@ export default function GodmodeChatWorkspace() {
     <section className="chat-stage">
       <header className="chat-topbar"><div className="top-left"><button className="history-trigger" onClick={() => setMobileHistory(true)}><Menu size={18} /></button><div><p>GODMODE / PRIVATE THREAD</p><h1>{conversation?.title || "New conversation"}</h1></div></div><div className="top-actions"><span className="connection-dot" />{diagnostics.filter(item => item.healthy).length} provider{diagnostics.filter(item => item.healthy).length === 1 ? "" : "s"} online<button onClick={() => setSettingsOpen(true)}><Settings2 size={17} />Configuration</button></div></header>
       <div className="chat-scroll"><div className="chat-thread">
-        {!activeConversationId ? <WelcomeCard onNew={openConversation} onConnect={() => setSettingsOpen(true)} /> : detailQuery.isLoading ? <div className="thread-loading"><Loader2 className="spin" />Opening encrypted conversation…</div> : messages.length ? messages.map(message => { const retryable = message.providerId !== "openrouter" || Boolean(message.modelId && callableModelKeys.has(`openrouter:${message.modelId}`)); return <ChatBubble key={message.id} message={message} canRetry={retryable} onChooseFree={() => { toast.message("Your old model is retired. Select a current free model to resend this prompt."); setSettingsOpen(true); }} onRetry={async () => { try { await retryChat.mutateAsync({ messageId: message.id }); await utils.godmode.chat.detail.invalidate({ conversationId: activeConversationId }); } catch (error) { const retryMessage = error instanceof Error ? error.message : "Retry failed."; if (retryMessage.includes("not currently configured") || retryMessage.includes("paid or retired")) { toast.error("Your old model is retired. Select a current free model to continue."); setSettingsOpen(true); } else toast.error(retryMessage); } }} retrying={retryChat.isPending} />; }) : <EmptyThread />}
+        {!activeConversationId ? <WelcomeCard onNew={openConversation} onConnect={() => setSettingsOpen(true)} /> : detailQuery.isLoading ? <div className="thread-loading"><Loader2 className="spin" />Opening encrypted conversation…</div> : messages.length ? messages.map(message => { const retryable = message.providerId !== "openrouter" || Boolean(message.modelId && callableModelKeys.has(`openrouter:${message.modelId}`)); return <ChatBubble key={message.id} message={message} attachments={attachments.filter(attachment => attachment.messageId === message.id) as ChatAttachment[]} canRetry={retryable} onChooseFree={() => { toast.message("Your old model is retired. Select a current free model to resend this prompt."); setSettingsOpen(true); }} onRetry={async () => { try { await retryChat.mutateAsync({ messageId: message.id }); await utils.godmode.chat.detail.invalidate({ conversationId: activeConversationId }); } catch (error) { const retryMessage = error instanceof Error ? error.message : "Retry failed."; if (retryMessage.includes("not currently configured") || retryMessage.includes("paid or retired")) { toast.error("Your old model is retired. Select a current free model to continue."); setSettingsOpen(true); } else toast.error(retryMessage); } }} retrying={retryChat.isPending} />; }) : <EmptyThread />}
         {isStreaming && <article className="message-row assistant stream-preview"><ProviderGlyph providerId={streamProviderId} /><div className="message-copy"><div className="message-meta"><span>{streamProviderId === "respan" ? "Respan fallback · " : ""}{streamModelId} · streaming</span><b><Zap size={12} />{streamFirstTokenMs === null ? "CONNECTING" : `FIRST TEXT ${(streamFirstTokenMs / 1000).toFixed(1)}s`}</b></div><div className="stream-status">{streamStatus}</div><div className="markdown-response">{streamingContent || "Waiting for the provider’s first text…"}</div></div></article>}
         {busy && !isStreaming && <div className="assistant-thinking"><ProviderGlyph providerId={selectedModels[0]?.providerId || "platform"} /><span>{researchMode ? "Research in progress · sources appear when the provider finalizes them…" : "Generating a compact response…"}</span><i /><i /><i /></div>}
         <div ref={messageEnd} />
       </div></div>
-      <form className="composer-wrap" onSubmit={submitMessage}><div className="selection-pill"><button type="button" onClick={() => setSettingsOpen(true)}><Cpu size={14} />{selectedModels.length ? hasInvalidSelection ? "Choose a free model" : `${selectedModels.length} ${mode === "competition" ? "models competing" : "model selected"}` : "Select model"}<ChevronDown size={13} /></button><div className="composer-mode-actions"><button type="button" className={researchMode ? "composer-research active" : "composer-research"} onClick={() => setResearchMode(current => !current)}><Search size={12} />Web Search</button><span>{researchMode ? <><Search size={12} />LIVE RESEARCH</> : mode === "competition" ? <><Split size={12} />COMPARE</> : <><Zap size={12} />FAST ROUTE</>}</span></div></div>{hasInvalidSelection && <p className="legacy-model-warning"><TriangleAlert size={12} />Old paid model removed. Choose a current free model before sending.</p>}<textarea value={composer} onChange={event => setComposer(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void submitMessage(); } }} placeholder={models.length ? hasInvalidSelection ? "Choose a free model in Model Routing…" : researchMode ? "Ask a current-information question…" : "Message GODMODE…" : "Connect OpenRouter or Respan to begin…"} rows={1} disabled={busy} /><div className="composer-footer"><span><Terminal size={12} />{researchMode ? "Live sources · research can take longer" : "Compact replies · bounded context"} · Enter to send</span><button className="send-command" disabled={!composer.trim() || busy || hasInvalidSelection} type="submit">{busy ? <Loader2 className="spin" size={16} /> : <SendHorizontal size={16} />}<span>Send</span></button></div></form>
+      <form className="composer-wrap" onSubmit={submitMessage}>
+        <input ref={attachmentInput} className="attachment-input" type="file" multiple accept="image/jpeg,image/png,image/webp,image/gif,.txt,.md,.csv,.html,.css,.json,.pdf,.js,.ts,.tsx,.jsx,.py,.java,.go,.c,.cpp,.sql,.xml,.yml,.yaml,.doc,.docx,.xls,.xlsx,.ppt,.pptx" onChange={event => { if (event.target.files) void queueAttachments(event.target.files); event.target.value = ""; }} />
+        <div className="selection-pill"><button type="button" onClick={() => setSettingsOpen(true)}><Cpu size={14} />{selectedModels.length ? hasInvalidSelection ? "Choose a free model" : `${selectedModels.length} ${mode === "competition" ? "models competing" : "model selected"}` : "Select model"}<ChevronDown size={13} /></button><div className="composer-mode-actions"><button type="button" className={researchMode ? "composer-research active" : "composer-research"} onClick={() => setResearchMode(current => !current)}><Search size={12} />Web Search</button><span>{researchMode ? <><Search size={12} />LIVE RESEARCH</> : mode === "competition" ? <><Split size={12} />COMPARE</> : <><Zap size={12} />FAST ROUTE</>}</span></div></div>
+        {hasInvalidSelection && <p className="legacy-model-warning"><TriangleAlert size={12} />Old paid model removed. Choose a current free model before sending.</p>}
+        {pendingAttachments.length > 0 && <div className="pending-attachments">{pendingAttachments.map(attachment => <div className="attachment-chip" key={attachment.id}>{attachment.mimeType.startsWith("image/") ? <FileImage size={13} /> : <FileText size={13} />}<span>{attachment.fileName}</span><small>{formatFileSize(attachment.sizeBytes)}</small><button type="button" onClick={() => void discardAttachment(attachment.id)} aria-label={`Remove ${attachment.fileName}`}><X size={12} /></button></div>)}</div>}
+        <textarea value={composer} onChange={event => setComposer(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void submitMessage(); } }} placeholder={models.length ? hasInvalidSelection ? "Choose a free model in Model Routing…" : researchMode ? "Ask a current-information question…" : pendingAttachments.length ? "Add instructions for these attachments…" : "Message GODMODE…" : "Connect OpenRouter or Respan to begin…"} rows={1} disabled={busy} />
+        <div className="composer-footer"><span><Terminal size={12} />{researchMode ? "Live sources · research can take longer" : "Compact replies · bounded context"} · Enter to send</span><div className="composer-file-actions"><button className="attach-command" type="button" disabled={busy || pendingAttachments.length >= 6} onClick={() => attachmentInput.current?.click()}><Paperclip size={14} />Attach</button><button className="send-command" disabled={(!composer.trim() && !pendingAttachments.length) || busy || hasInvalidSelection} type="submit">{busy ? <Loader2 className="spin" size={16} /> : <SendHorizontal size={16} />}<span>Send</span></button></div></div>
+      </form>
     </section>
     <aside className={`settings-dock ${settingsOpen ? "visible" : ""}`}><button className="settings-close" onClick={() => setSettingsOpen(false)}><X size={18} /></button><div className="settings-head"><p>WORKSPACE CONTROLS</p><h2>Route the conversation.</h2><span>Every selection below is verified live before it can receive a message.</span></div><section className="settings-block"><div className="block-label"><KeyRound size={14} />PROVIDER CONNECTIONS</div>{diagnostics.filter(item => item.providerId !== "platform").map(item => <div className="provider-row" key={item.providerId}><ProviderGlyph providerId={item.providerId} /><div><strong>{item.providerName}</strong><small>{item.healthy ? `${item.modelCount} callable models` : item.configured ? item.error || "Connection needs attention" : "Optional connection"}</small></div>{item.healthy ? <button className="quiet-action danger" onClick={() => void disconnect(item.providerId as "openrouter" | "respan")}>Disconnect</button> : <button className="quiet-action" onClick={() => setConnectProvider(item.providerId as "openrouter" | "respan")}>Connect</button>}</div>)}<button className="refresh-action" onClick={() => refreshProviders.mutate(undefined, { onSuccess: () => utils.godmode.providers.list.invalidate(), onError: error => toast.error(error.message || "OpenRouter access could not be verified.") })} disabled={refreshProviders.isPending}><RefreshCw className={refreshProviders.isPending ? "spin" : ""} size={14} />Verify live access</button></section><section className="settings-block"><div className="managed-route"><ProviderGlyph providerId="platform" /><div><strong>GODMODE Managed Fast · default fastest</strong><small>Measured server-side speed route. It is explicitly managed, not labeled as an OpenRouter free model.</small>{measuredManagedFastModel && <button className="quiet-action" onClick={() => { setMode("solo"); setSelectedModels([{ providerId: measuredManagedFastModel.providerId, modelId: measuredManagedFastModel.modelId }]); toast.message("Measured managed fastest route selected."); }}>Use measured fastest</button>}</div></div></section><section className="settings-block"><div className="block-label"><Sparkles size={14} />SYSTEM PROMPT</div><textarea className="system-prompt" value={systemPrompt} onChange={event => setSystemPrompt(event.target.value)} placeholder="Define the behavior, tone, constraints, and context for this conversation…" rows={5} maxLength={promptCharacterLimit} /><div className="prompt-save-row"><span className={hasUnsavedPrompt ? "prompt-state unsaved" : "prompt-state saved"}>{hasUnsavedPrompt ? "UNSAVED CHANGES" : activeConversationId ? "SAVED · ACTIVE" : "START A THREAD TO SAVE"}</span><button className="save-prompt" type="button" onClick={() => void persistConfiguration()} disabled={!activeConversationId || !hasUnsavedPrompt || configureChat.isPending}>{configureChat.isPending ? <Loader2 className="spin" size={12} /> : <Check size={12} />}{configureChat.isPending ? "Saving…" : "Save system prompt"}</button></div><div className={promptNearLimit ? "prompt-length near-limit" : "prompt-length"}>{systemPrompt.length.toLocaleString()} / {promptCharacterLimit.toLocaleString()} characters</div><p className="subtle-note">Fast Route compiles long saved prompts to a compact execution policy for speed; your full original prompt remains stored. Compare mode uses full selected-model routing.</p></section><section className="settings-block"><div className="block-label"><Search size={14} />LIVE WEB RESEARCH</div><button type="button" className={researchMode ? "research-toggle active" : "research-toggle"} onClick={() => setResearchMode(current => !current)}><span>{researchMode ? "Research enabled" : "Research off"}</span><small>{researchMode ? "Uses real OpenRouter web search; sources will be linked." : "Use only for current facts; it may take longer."}</small></button></section><section className="settings-block"><div className="block-label"><Gauge size={14} />MODEL ROUTING <span className="free-only-badge">OPENROUTER FREE + MANAGED</span></div><div className="mode-toggle"><button className={mode === "solo" ? "active" : ""} onClick={() => { setMode("solo"); setSelectedModels(current => current.slice(0, 1)); }}><Bot size={13} />Direct</button><button className={mode === "competition" ? "active" : ""} onClick={() => setMode("competition")}><Split size={13} />Compare</button></div><p className="subtle-note free-policy">Default Fastest selects the measured managed route. Choose an OpenRouter free model only when you want the strict free route: one compact attempt, stopped after 2.75 seconds. Paid OpenRouter models remain excluded.</p><div className="model-picker">{models.length ? models.map(model => { const selected = selectedModels.some(item => item.providerId === model.providerId && item.modelId === model.modelId); return <button key={model.key} className={selected ? "model-option selected" : "model-option"} onClick={() => toggleModel({ providerId: model.providerId, modelId: model.modelId })}><span className="selection-check">{selected && <Check size={12} />}</span><ProviderGlyph providerId={model.providerId} /><span><strong>{model.displayName}</strong><small>{model.providerName}{model.contextLength ? ` · ${Intl.NumberFormat().format(model.contextLength)} ctx` : ""}</small></span></button>; }) : <div className="no-model-card"><TriangleAlert size={16} /><span>No usable model route. Verify OpenRouter access or use GODMODE Managed Fast.</span></div>}</div></section></aside>
     {connectProvider && <div className="connect-overlay"><form className="connect-card" onSubmit={connect}><button type="button" className="connect-close" onClick={() => { setConnectProvider(undefined); setApiKey(""); }}><X size={18} /></button><ProviderGlyph providerId={connectProvider} /><p>{connectProvider === "openrouter" ? "OPENROUTER" : "RESPAN"} CONNECTION</p><h2>Connect an API key.</h2><span>The key is sent only to the server, verified with a live model request, and encrypted before persistence. It never returns to this browser.</span><label>API KEY<input autoFocus type="password" value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder={connectProvider === "openrouter" ? "sk-or-v1-…" : "Paste Respan API key"} /></label><button className="signal-primary" disabled={!apiKey.trim() || attachProvider.isPending}>{attachProvider.isPending ? <Loader2 className="spin" size={16} /> : <KeyRound size={16} />}Verify and connect</button></form></div>}
@@ -280,12 +344,14 @@ function WelcomeCard({ onNew, onConnect }: { onNew: () => void; onConnect: () =>
 
 function EmptyThread() { return <div className="thread-empty"><Sparkles size={22} /><h2>Thread is ready.</h2><span>Set a system prompt or send the first message. Only real provider responses will appear here.</span></div>; }
 
-function ChatBubble({ message, onRetry, onChooseFree, canRetry, retrying }: { message: { id: string; role: string; content: string; providerId: string | null; modelId: string | null; researchMode: string; status: string; errorMessage: string | null; firstTokenMs: number | null; latencyMs: number | null; totalTokens: number | null; createdAt: Date }; onRetry: () => void; onChooseFree: () => void; canRetry: boolean; retrying: boolean }) {
+function ChatBubble({ message, attachments, onRetry, onChooseFree, canRetry, retrying }: { message: { id: string; role: string; content: string; providerId: string | null; modelId: string | null; researchMode: string; status: string; errorMessage: string | null; firstTokenMs: number | null; latencyMs: number | null; totalTokens: number | null; createdAt: Date }; attachments: ChatAttachment[]; onRetry: () => void; onChooseFree: () => void; canRetry: boolean; retrying: boolean }) {
   const isUser = message.role === "user";
   const isResearch = message.researchMode === "yes";
   const researchContent = isResearch ? splitResearchContent(message.content) : { body: message.content, sources: [] };
   const isCitedResearch = isResearch && researchContent.sources.length > 0;
   const diagnostic = message.errorMessage?.trim().toLowerCase() === "fetch failed" ? "The provider connection dropped before it returned. No response was generated; retry this model once." : message.errorMessage || "The provider did not return a usable response.";
-  if (isUser) return <article className="message-row user"><div className="message-copy"><p>{message.content}</p></div><span className="user-mark">YOU</span></article>;
-  return <article className={`message-row assistant ${message.status === "failed" ? "failure" : ""}`}><ProviderGlyph providerId={(message.providerId || "platform") as ProviderId} /><div className="message-copy"><div className="message-meta"><span>{message.modelId || "Provider"}</span>{message.status === "failed" ? <b><TriangleAlert size={12} />FAILED</b> : <b><Check size={12} />COMPLETE</b>}</div>{message.status === "failed" ? <div className="failure-copy"><TriangleAlert size={15} /><span>{diagnostic}</span></div> : <><div className="markdown-response"><Suspense fallback={<span>Rendering result…</span>}><Streamdown>{researchContent.body}</Streamdown></Suspense></div>{isResearch && <ResearchSources sources={researchContent.sources} />}</>}<footer>{isCitedResearch && <span><Search size={12} />Cited research</span>}{isResearch && <ResearchTiming latencyMs={message.latencyMs} />}{message.firstTokenMs !== null && message.firstTokenMs !== undefined && <span><Zap size={12} />First text {duration(message.firstTokenMs)}</span>}{!isResearch && <span><Clock3 size={12} />{duration(message.latencyMs)}</span>}<span><Cpu size={12} />{message.totalTokens?.toLocaleString() ?? "—"} tokens</span>{message.status === "failed" && (canRetry ? <button onClick={onRetry} disabled={retrying}><RotateCcw size={12} />Retry exact model</button> : <button onClick={onChooseFree}><Settings2 size={12} />Choose a free model</button>)}{message.status === "completed" && <button onClick={() => navigator.clipboard.writeText(message.content).then(() => toast.success("Response copied."))}><Copy size={12} />Copy</button>}</footer></div></article>;
+  const downloadUrl = (attachment: ChatAttachment) => `/api/godmode/attachments/${attachment.id}/download`;
+  const attachmentList = attachments.length ? <div className="message-attachments">{attachments.map(attachment => <div className={`message-attachment ${attachment.kind}`} key={attachment.id}>{attachment.mimeType.startsWith("image/") && <img src={`${downloadUrl(attachment)}?inline=1`} alt={attachment.fileName} />}<div>{attachment.kind === "generated_code" ? <FileCode2 size={14} /> : attachment.mimeType.startsWith("image/") ? <FileImage size={14} /> : <FileText size={14} />}<span><strong>{attachment.fileName}</strong><small>{attachment.kind === "generated_code" ? "Generated code" : "Attached file"} · {formatFileSize(attachment.sizeBytes)}</small></span></div><a href={downloadUrl(attachment)}><Download size={13} />Download</a></div>)}</div> : null;
+  if (isUser) return <article className="message-row user"><div className="message-copy"><p>{message.content}</p>{attachmentList}</div><span className="user-mark">YOU</span></article>;
+  return <article className={`message-row assistant ${message.status === "failed" ? "failure" : ""}`}><ProviderGlyph providerId={(message.providerId || "platform") as ProviderId} /><div className="message-copy"><div className="message-meta"><span>{message.modelId || "Provider"}</span>{message.status === "failed" ? <b><TriangleAlert size={12} />FAILED</b> : <b><Check size={12} />COMPLETE</b>}</div>{message.status === "failed" ? <div className="failure-copy"><TriangleAlert size={15} /><span>{diagnostic}</span></div> : <><div className="markdown-response"><Suspense fallback={<span>Rendering result…</span>}><Streamdown>{researchContent.body}</Streamdown></Suspense></div>{attachmentList}{isResearch && <ResearchSources sources={researchContent.sources} />}</>}<footer>{isCitedResearch && <span><Search size={12} />Cited research</span>}{isResearch && <ResearchTiming latencyMs={message.latencyMs} />}{message.firstTokenMs !== null && message.firstTokenMs !== undefined && <span><Zap size={12} />First text {duration(message.firstTokenMs)}</span>}{!isResearch && <span><Clock3 size={12} />{duration(message.latencyMs)}</span>}<span><Cpu size={12} />{message.totalTokens?.toLocaleString() ?? "—"} tokens</span>{message.status === "failed" && (canRetry ? <button onClick={onRetry} disabled={retrying}><RotateCcw size={12} />Retry exact model</button> : <button onClick={onChooseFree}><Settings2 size={12} />Choose a free model</button>)}{message.status === "completed" && <button onClick={() => navigator.clipboard.writeText(message.content).then(() => toast.success("Response copied."))}><Copy size={12} />Copy</button>}</footer></div></article>;
 }

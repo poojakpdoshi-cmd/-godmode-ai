@@ -1,4 +1,5 @@
 import * as db from "./db";
+import { attachmentContext, createGeneratedCodeArtifacts, summarizeAttachment } from "./chatArtifacts";
 import { assertOpenRouterFreeAccess, invokeConfiguredModel, ProviderId, requireCallableModel } from "./providerRegistry";
 
 export type ChatSelection = { providerId: ProviderId; modelId: string };
@@ -11,7 +12,7 @@ const MAX_FAST_HISTORY_CHARACTERS = 8_000;
 const MAX_SHORT_TASK_HISTORY_MESSAGES = 2;
 const MAX_SHORT_TASK_HISTORY_CHARACTERS = 1_200;
 const SHORT_TASK_CHARACTER_LIMIT = 280;
-const FAST_RESPONSE_POLICY = "Answer directly. Be concise; do not restate the request. Use more detail only when asked.";
+const FAST_RESPONSE_POLICY = "Answer directly. Be concise; do not restate the request. Use more detail only when asked. For code, use complete fenced code blocks so downloadable files can be created.";
 const FAST_POLICY_CHARACTER_LIMIT = 360;
 
 export function validateChatSelections(mode: ChatMode, selections: ChatSelection[]) {
@@ -54,11 +55,26 @@ export function buildProviderMessages(systemPrompt: string | null, messages: Arr
   ];
 }
 
+function addAttachmentContext(messages: ProviderMessage[], attachments: ReturnType<typeof summarizeAttachment>[]) {
+  if (!attachments.length) return messages;
+  const index = messages.map(message => message.role).lastIndexOf("user");
+  if (index === -1) return messages;
+  return messages.map((message, messageIndex) => messageIndex === index ? { ...message, content: `${message.content}${attachmentContext(attachments)}` } : message);
+}
+
+async function storeGeneratedArtifacts(input: { userId: number; conversationId: string; messageId: string; content: string }) {
+  try {
+    await createGeneratedCodeArtifacts(input);
+  } catch {
+    // A provider response remains usable if derived artifact storage is temporarily unavailable.
+  }
+}
+
 function titleFromMessage(content: string) {
   return content.replace(/\s+/g, " ").trim().slice(0, 64) || "New conversation";
 }
 
-export async function sendChatMessage(input: { userId: number; conversationId: string; content: string; mode: ChatMode; selections: ChatSelection[]; fast?: boolean; research?: boolean }) {
+export async function sendChatMessage(input: { userId: number; conversationId: string; content: string; mode: ChatMode; selections: ChatSelection[]; attachmentIds?: string[]; fast?: boolean; research?: boolean }) {
   const conversation = await db.getConversationForUser(input.userId, input.conversationId);
   if (!conversation) throw new Error("Conversation not found.");
   const selections = validateChatSelections(input.mode, input.selections);
@@ -68,14 +84,16 @@ export async function sendChatMessage(input: { userId: number; conversationId: s
   await Promise.all(routedSelections.map(selection => requireCallableModel(input.userId, selection.providerId, selection.modelId)));
   await db.updateConversationConfiguration({ userId: input.userId, conversationId: conversation.id, mode: input.mode, selectedModels: JSON.stringify(selections) });
   const userMessage = await db.appendConversationMessage({ userId: input.userId, conversationId: conversation.id, role: "user", content: input.content.trim() });
+  const attachments = await db.bindConversationAttachments({ userId: input.userId, conversationId: conversation.id, messageId: userMessage.id, attachmentIds: input.attachmentIds });
   if (conversation.title === "New conversation") await db.updateConversationTitle(input.userId, conversation.id, titleFromMessage(input.content));
   const history = await db.listConversationMessages(input.userId, conversation.id);
-  const providerMessages = buildProviderMessages(conversation.systemPrompt, history, input.fast !== false && !input.research);
+  const providerMessages = addAttachmentContext(buildProviderMessages(conversation.systemPrompt, history, input.fast !== false && !input.research), attachments.map(summarizeAttachment));
   await Promise.all(routedSelections.map(async selection => {
     const startedAt = Date.now();
     try {
       const result = await invokeConfiguredModel({ userId: input.userId, providerId: selection.providerId, modelId: selection.modelId, messages: providerMessages, research: input.research });
-      await db.appendConversationMessage({ userId: input.userId, conversationId: conversation.id, replyToMessageId: userMessage.id, role: "assistant", content: result.output || "The provider returned an empty response.", providerId: selection.providerId, modelId: selection.modelId, researchMode: input.research, status: "completed", latencyMs: Date.now() - startedAt, ...result.usage });
+      const assistantMessage = await db.appendConversationMessage({ userId: input.userId, conversationId: conversation.id, replyToMessageId: userMessage.id, role: "assistant", content: result.output || "The provider returned an empty response.", providerId: selection.providerId, modelId: selection.modelId, researchMode: input.research, status: "completed", latencyMs: Date.now() - startedAt, ...result.usage });
+      await storeGeneratedArtifacts({ userId: input.userId, conversationId: conversation.id, messageId: assistantMessage.id, content: assistantMessage.content });
     } catch (error) {
       const message = error instanceof Error ? error.message.slice(0, 1_500) : "Unknown provider error";
       await db.appendConversationMessage({ userId: input.userId, conversationId: conversation.id, replyToMessageId: userMessage.id, role: "assistant", content: "", providerId: selection.providerId, modelId: selection.modelId, researchMode: input.research, status: "failed", errorMessage: message, latencyMs: Date.now() - startedAt });
@@ -84,20 +102,22 @@ export async function sendChatMessage(input: { userId: number; conversationId: s
   return db.getConversationDetail(input.userId, conversation.id);
 }
 
-export async function prepareStreamedChat(input: { userId: number; conversationId: string; content: string; selection: ChatSelection }) {
+export async function prepareStreamedChat(input: { userId: number; conversationId: string; content: string; selection: ChatSelection; attachmentIds?: string[] }) {
   const conversation = await db.getConversationForUser(input.userId, input.conversationId);
   if (!conversation) throw new Error("Conversation not found.");
   if (input.selection.providerId !== "openrouter") throw new Error("Fast streaming currently requires OpenRouter routing.");
   const selection: ChatSelection = { providerId: "openrouter", modelId: "openrouter/free" };
   await db.updateConversationConfiguration({ userId: input.userId, conversationId: conversation.id, mode: "solo", selectedModels: JSON.stringify([input.selection]) });
   const userMessage = await db.appendConversationMessage({ userId: input.userId, conversationId: conversation.id, role: "user", content: input.content.trim() });
+  const attachments = await db.bindConversationAttachments({ userId: input.userId, conversationId: conversation.id, messageId: userMessage.id, attachmentIds: input.attachmentIds });
   if (conversation.title === "New conversation") await db.updateConversationTitle(input.userId, conversation.id, titleFromMessage(input.content));
   const history = await db.listConversationMessages(input.userId, conversation.id);
-  return { conversationId: conversation.id, userMessageId: userMessage.id, selection, respanFallbackEnabled: conversation.respanFallback === "yes", messages: buildProviderMessages(conversation.systemPrompt, history, true) };
+  return { conversationId: conversation.id, userMessageId: userMessage.id, selection, respanFallbackEnabled: conversation.respanFallback === "yes", messages: addAttachmentContext(buildProviderMessages(conversation.systemPrompt, history, true), attachments.map(summarizeAttachment)) };
 }
 
 export async function persistStreamedAssistantMessage(input: { userId: number; conversationId: string; userMessageId: string; selection: ChatSelection; output: string; firstTokenMs: number | null; latencyMs: number; usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number } }) {
-  await db.appendConversationMessage({ userId: input.userId, conversationId: input.conversationId, replyToMessageId: input.userMessageId, role: "assistant", content: input.output || "The provider returned an empty response.", providerId: input.selection.providerId, modelId: input.selection.modelId, status: "completed", firstTokenMs: input.firstTokenMs ?? undefined, latencyMs: input.latencyMs, ...input.usage });
+  const message = await db.appendConversationMessage({ userId: input.userId, conversationId: input.conversationId, replyToMessageId: input.userMessageId, role: "assistant", content: input.output || "The provider returned an empty response.", providerId: input.selection.providerId, modelId: input.selection.modelId, status: "completed", firstTokenMs: input.firstTokenMs ?? undefined, latencyMs: input.latencyMs, ...input.usage });
+  await storeGeneratedArtifacts({ userId: input.userId, conversationId: input.conversationId, messageId: message.id, content: message.content });
 }
 
 export async function persistStreamedFailure(input: { userId: number; conversationId: string; userMessageId: string; selection: ChatSelection; errorMessage: string; latencyMs: number }) {
@@ -123,7 +143,8 @@ export async function retryChatMessage(input: { userId: number; messageId: strin
   const startedAt = Date.now();
   try {
     const result = await invokeConfiguredModel({ userId: input.userId, providerId: failedMessage.providerId as ProviderId, modelId: failedMessage.modelId, messages: providerMessages });
-    await db.appendConversationMessage({ userId: input.userId, conversationId: conversation.id, replyToMessageId: failedMessage.replyToMessageId ?? undefined, role: "assistant", content: result.output || "The provider returned an empty response.", providerId: failedMessage.providerId, modelId: failedMessage.modelId, status: "completed", latencyMs: Date.now() - startedAt, ...result.usage });
+    const message = await db.appendConversationMessage({ userId: input.userId, conversationId: conversation.id, replyToMessageId: failedMessage.replyToMessageId ?? undefined, role: "assistant", content: result.output || "The provider returned an empty response.", providerId: failedMessage.providerId, modelId: failedMessage.modelId, status: "completed", latencyMs: Date.now() - startedAt, ...result.usage });
+    await storeGeneratedArtifacts({ userId: input.userId, conversationId: conversation.id, messageId: message.id, content: message.content });
   } catch (error) {
     const message = error instanceof Error ? error.message.slice(0, 1_500) : "Unknown provider error";
     await db.appendConversationMessage({ userId: input.userId, conversationId: conversation.id, replyToMessageId: failedMessage.replyToMessageId ?? undefined, role: "assistant", content: "", providerId: failedMessage.providerId, modelId: failedMessage.modelId, status: "failed", errorMessage: message, latencyMs: Date.now() - startedAt });
