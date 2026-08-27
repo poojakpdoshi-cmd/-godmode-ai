@@ -104,4 +104,4 @@
 - [x] Commit and securely push the managed-quota recovery fix and the verified NVIDIA/token-efficiency release to the public GitHub repository.
 - [x] Replace the incorrect placeholder clone command with an exact Windows local-run path, a clear wrong-directory recovery note, and pnpm’s required build-script approval step.
 - [x] Run a real local CLI smoke test from the documented project directory and verify the package tarball and loopback startup behavior.
-- [ ] Commit and push the corrected README/bin Windows local-run instructions to the public GitHub repository, then verify the public main SHA includes them.
+- [x] Commit and push the corrected README/bin Windows local-run instructions to the public GitHub repository, then verify the public main SHA includes them.
