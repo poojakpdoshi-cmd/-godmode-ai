@@ -89,3 +89,7 @@
 
 ### End of current release task
 
+- [ ] Add a real code-file generation workflow with downloadable files instead of chat-only code blocks.
+- [ ] Add authenticated image and document attachments to conversations with secure server-side storage and provider-safe handling.
+- [ ] Add regression tests for generated-file ownership, upload validation, download access, and attachment persistence.
+- [ ] Rewrite public GitHub history to remove Manus-authored contributor attribution, force-push the cleaned main branch, and verify the public contributor state.
