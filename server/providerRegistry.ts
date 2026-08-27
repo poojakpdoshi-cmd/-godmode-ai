@@ -86,6 +86,14 @@ export function describeProviderTransportFailure(providerName: string, error: un
   return `${providerName} could not be reached for this request. No response was generated. Check the connection and retry the same model.${detail && detail !== "fetch failed" ? ` Detail: ${detail}` : ""}`;
 }
 
+export function describeManagedProviderFailure(error: unknown) {
+  const message = safeError(error);
+  if (/\b412\b/.test(message) && /usage exhausted|quota|allowance/i.test(message)) {
+    return "GODMODE Managed Fast is temporarily unavailable because this project’s managed usage allowance is exhausted. Your OpenRouter, NVIDIA NIM, and Respan keys were not used. Open Configuration, connect or select one of your provider models, then resend the message.";
+  }
+  return "GODMODE Managed Fast could not complete this request. Your connected provider keys were not used. Open Configuration, select a callable OpenRouter, NVIDIA NIM, or Respan model, then retry.";
+}
+
 export function completionTokenLimit(messages: ProviderMessage[], research = false) {
   if (research) return FAST_COMPLETION_TOKEN_LIMIT;
   const latestUserContent = [...messages].reverse().find(message => message.role === "user")?.content.replace(/\s+/g, " ").trim() ?? "";
@@ -347,7 +355,12 @@ export async function requireCallableModel(userId: number, providerId: ProviderI
 export async function invokeConfiguredModel(input: { userId: number; providerId: ProviderId; modelId: string; messages: ProviderMessage[]; research?: boolean }): Promise<CompletionResult> {
   await requireCallableModel(input.userId, input.providerId, input.modelId);
   if (input.providerId === "platform") {
-    const result = await invokeLLM({ model: input.modelId, messages: input.messages, maxTokens: completionTokenLimit(input.messages, input.research) });
+    let result: Awaited<ReturnType<typeof invokeLLM>>;
+    try {
+      result = await invokeLLM({ model: input.modelId, messages: input.messages, maxTokens: completionTokenLimit(input.messages, input.research) });
+    } catch (error) {
+      throw new Error(describeManagedProviderFailure(error));
+    }
     return { output: textContent(result.choices[0]?.message.content), usage: result.usage ? { promptTokens: result.usage.prompt_tokens, completionTokens: result.usage.completion_tokens, totalTokens: result.usage.total_tokens } : undefined };
   }
   const configuration = await db.getProviderConfiguration(input.userId, input.providerId);

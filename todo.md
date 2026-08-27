@@ -97,3 +97,8 @@
 - [x] Reduce remaining short-task token usage further through request-budget controls without silently truncating required user instructions.
 - [x] Add regression coverage for NVIDIA key isolation, inference eligibility, routing, and the revised compact request budget.
 - [ ] Live-verify the NVIDIA NIM connection and selected-model response after the user connects their key in the app.
+- [x] Replace raw Managed Fast quota-exhaustion errors with a truthful recovery message that directs the user to a configured provider route.
+- [x] Add regression coverage for Managed Fast HTTP 412 usage-exhausted diagnostics and the non-raw chat failure UI.
+- [x] Add a chat-facing regression for Managed Fast HTTP 412 that proves the persisted failed message contains the sanitized recovery text rather than raw upstream payload.
+- [x] Verify the Managed Fast quota-exhaustion failure state in the chat UI with the sanitized recovery guidance.
+- [ ] Commit and securely push the managed-quota recovery fix and the verified NVIDIA/token-efficiency release to the public GitHub repository.

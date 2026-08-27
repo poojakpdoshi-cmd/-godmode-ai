@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildProviderCompletionPayload, canUseRespanFallback, CallableModel, completionTokenLimit, describeProviderRequestFailure, describeProviderTransportFailure, isTextChatCapableModel, isVerifiedFreeOpenRouterModel, MODEL_REGISTRY_TTL_MS, prioritizeDefaultFastestModels, prioritizeFastFreeModels, ProviderDiagnostic, retainCallableModels, selectManagedFastModels, shouldUseRespanFallback } from "./providerRegistry";
+import { buildProviderCompletionPayload, canUseRespanFallback, CallableModel, completionTokenLimit, describeManagedProviderFailure, describeProviderRequestFailure, describeProviderTransportFailure, isTextChatCapableModel, isVerifiedFreeOpenRouterModel, MODEL_REGISTRY_TTL_MS, prioritizeDefaultFastestModels, prioritizeFastFreeModels, ProviderDiagnostic, retainCallableModels, selectManagedFastModels, shouldUseRespanFallback } from "./providerRegistry";
 
 const models: CallableModel[] = [
   { key: "platform:callable", providerId: "platform", providerName: "Platform catalog", modelId: "callable", displayName: "Callable", supportsTools: false, supportsVision: false, inputTypes: ["text"] },
@@ -40,6 +40,14 @@ describe("configured model registry", () => {
     expect(diagnostic).toContain("could not be reached");
     expect(diagnostic).toContain("No response was generated");
     expect(diagnostic).not.toContain("TypeError");
+  });
+
+  it("replaces raw managed-usage exhaustion JSON with a provider-safe recovery path", () => {
+    const diagnostic = describeManagedProviderFailure(new Error('LLM invoke failed: 412 Precondition Failed – {"code":9,"message":"your account has hit a usage exhausted"}'));
+    expect(diagnostic).toContain("managed usage allowance is exhausted");
+    expect(diagnostic).toContain("OpenRouter, NVIDIA NIM, and Respan keys were not used");
+    expect(diagnostic).not.toContain("Precondition Failed");
+    expect(diagnostic).not.toContain('"code"');
   });
 
   it("uses the native web search tool only when research mode is requested", () => {

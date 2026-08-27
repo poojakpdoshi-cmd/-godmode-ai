@@ -33,7 +33,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import React, { FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ResearchSources, ResearchTiming, splitResearchContent } from "./ResearchResponseMeta";
 import { defaultFastestSelection } from "@/lib/modelRouting";
@@ -345,7 +345,7 @@ function WelcomeCard({ onNew, onConnect }: { onNew: () => void; onConnect: () =>
 
 function EmptyThread() { return <div className="thread-empty"><Sparkles size={22} /><h2>Thread is ready.</h2><span>Set a system prompt or send the first message. Only real provider responses will appear here.</span></div>; }
 
-function ChatBubble({ message, attachments, onRetry, onChooseFree, canRetry, retrying }: { message: { id: string; role: string; content: string; providerId: string | null; modelId: string | null; researchMode: string; status: string; errorMessage: string | null; firstTokenMs: number | null; latencyMs: number | null; totalTokens: number | null; createdAt: Date }; attachments: ChatAttachment[]; onRetry: () => void; onChooseFree: () => void; canRetry: boolean; retrying: boolean }) {
+export function ChatBubble({ message, attachments, onRetry, onChooseFree, canRetry, retrying }: { message: { id: string; role: string; content: string; providerId: string | null; modelId: string | null; researchMode: string; status: string; errorMessage: string | null; firstTokenMs: number | null; latencyMs: number | null; totalTokens: number | null; createdAt: Date }; attachments: ChatAttachment[]; onRetry: () => void; onChooseFree: () => void; canRetry: boolean; retrying: boolean }) {
   const isUser = message.role === "user";
   const isResearch = message.researchMode === "yes";
   const researchContent = isResearch ? splitResearchContent(message.content) : { body: message.content, sources: [] };

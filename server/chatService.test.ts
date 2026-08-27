@@ -161,6 +161,15 @@ describe("chat execution service", () => {
     expect(db.appendConversationMessage).toHaveBeenLastCalledWith(expect.objectContaining({ role: "assistant", status: "failed", content: "", errorMessage: "Provider rejected request" }));
   });
 
+  it("persists a user-safe Managed Fast exhaustion recovery message rather than raw quota JSON", async () => {
+    const recovery = "GODMODE Managed Fast is temporarily unavailable because this project’s managed usage allowance is exhausted. Your OpenRouter, NVIDIA NIM, and Respan keys were not used. Open Configuration, connect or select one of your provider models, then resend the message.";
+    provider.invokeConfiguredModel.mockRejectedValue(new Error(recovery));
+    await sendChatMessage({ userId: 7, conversationId: conversation.id, content: "hello", mode: "solo", selections: [{ providerId: "platform", modelId: "claude-haiku-4-5" }] });
+    expect(db.appendConversationMessage).toHaveBeenLastCalledWith(expect.objectContaining({ role: "assistant", status: "failed", providerId: "platform", errorMessage: recovery }));
+    expect(JSON.stringify(db.appendConversationMessage.mock.calls.at(-1))).not.toContain("Precondition Failed");
+    expect(JSON.stringify(db.appendConversationMessage.mock.calls.at(-1))).not.toContain('"code":9');
+  });
+
   it("persists research-mode metadata with the final cited provider response", async () => {
     provider.invokeConfiguredModel.mockResolvedValue({ output: "Current answer\n\nSources:\n- [Official](https://example.com)", usage: { totalTokens: 99 } });
     await sendChatMessage({ userId: 7, conversationId: conversation.id, content: "Find the current answer", mode: "solo", selections: [{ providerId: "openrouter", modelId: "qwen/test" }], research: true });
