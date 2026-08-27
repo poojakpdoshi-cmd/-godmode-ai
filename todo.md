@@ -70,7 +70,7 @@
 - [x] Make the measured managed model the clear default fastest route and reduce free fast mode to a single bounded attempt.
 - [x] Prove repeated fast-route lookups reuse the verified registry cache without rediscovery or re-probing inside its TTL.
 - [x] Prove the ranked default fastest selection and route behavior end to end rather than only through manual model selection.
-- [ ] Diagnose and fix the newly reported non-working fast-route or preview behavior from current runtime evidence.
+- [x] Diagnose and fix the newly reported non-working fast-route or preview behavior from current runtime evidence.
 - [x] Clarify whether the user wants a compliant OpenRouter-plus-Respan fallback workflow rather than key rotation to bypass provider limits.
 - [x] Implement an explicit user-authorized OpenRouter-to-Respan fallback for rate-limit, access, and availability failures with truthful provider attribution.
 - [ ] Live-verify the automatic Respan fallback after the user connects a Respan key in the app.
@@ -101,4 +101,7 @@
 - [x] Add regression coverage for Managed Fast HTTP 412 usage-exhausted diagnostics and the non-raw chat failure UI.
 - [x] Add a chat-facing regression for Managed Fast HTTP 412 that proves the persisted failed message contains the sanitized recovery text rather than raw upstream payload.
 - [x] Verify the Managed Fast quota-exhaustion failure state in the chat UI with the sanitized recovery guidance.
-- [ ] Commit and securely push the managed-quota recovery fix and the verified NVIDIA/token-efficiency release to the public GitHub repository.
+- [x] Commit and securely push the managed-quota recovery fix and the verified NVIDIA/token-efficiency release to the public GitHub repository.
+- [x] Replace the incorrect placeholder clone command with an exact Windows local-run path, a clear wrong-directory recovery note, and pnpm’s required build-script approval step.
+- [x] Run a real local CLI smoke test from the documented project directory and verify the package tarball and loopback startup behavior.
+- [ ] Commit and push the corrected README/bin Windows local-run instructions to the public GitHub repository, then verify the public main SHA includes them.

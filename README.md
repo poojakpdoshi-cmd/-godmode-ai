@@ -4,19 +4,42 @@ GODMODE AI is a multi-provider chat command center with encrypted in-app OpenRou
 
 ## Local browser + terminal use
 
-The local CLI runs GODMODE on **`http://127.0.0.1:3000` only**. It creates one local operator in the local database; it does not use Manus OAuth in local mode. Provider keys are entered in the browser and encrypted at rest using your `JWT_SECRET`.
+The local CLI runs GODMODE on **`http://127.0.0.1:3000` only**. It creates one local operator in a local MySQL/TiDB database; it does not use Manus OAuth in local mode. Provider keys are entered in the browser and encrypted at rest using your `JWT_SECRET`.
 
-```bash
-git clone <your-private-repository-url>
-cd godmode-ai
-pnpm install
-pnpm godmode init
-# Edit .env: set DATABASE_URL and JWT_SECRET
-pnpm godmode db
-pnpm godmode dev
+### Windows PowerShell — exact copy/paste commands
+
+Run these commands **one at a time** from a normal PowerShell window. Do not type angle brackets (`<` or `>`) around the repository URL.
+
+```powershell
+cd $HOME
+git clone https://github.com/poojakpdoshi-cmd/-godmode-ai.git
+cd .\-godmode-ai
+corepack enable
+corepack pnpm install
+corepack pnpm approve-builds
+# Select esbuild (and @tailwindcss/oxide if it is listed), then press Enter.
+corepack pnpm rebuild
+corepack pnpm godmode init
+notepad .env
 ```
 
-Then open [http://127.0.0.1:3000](http://127.0.0.1:3000). In **Configuration**, connect your own OpenRouter key and, optionally, a Respan key. The built-in managed route is only available in the hosted project because it uses host-provided server credentials.
+In the `.env` file, replace the sample `DATABASE_URL` with your running local MySQL/TiDB connection and replace `JWT_SECRET` with a long private random value. Save and close Notepad, then run:
+
+```powershell
+corepack pnpm godmode doctor
+corepack pnpm godmode db
+corepack pnpm godmode dev
+```
+
+pnpm requires you to explicitly approve dependency build scripts. Run `corepack pnpm approve-builds` **inside `-godmode-ai`**, select `esbuild` (and `@tailwindcss/oxide` if it appears), press Enter, then run `corepack pnpm rebuild`. Do not approve packages you do not recognize. If you still see **`ERR_PNPM_IGNORED_BUILDS`**, repeat this approval step from the project directory; do not run `pnpm godmode` from your home folder.
+
+```powershell
+corepack pnpm approve-builds
+```
+
+Then open [http://127.0.0.1:3000](http://127.0.0.1:3000). In **Configuration**, connect your own OpenRouter key and, optionally, a Respan or NVIDIA NIM key. The built-in Managed Fast route is only available in the hosted project because it uses host-provided server credentials.
+
+> A local MySQL or TiDB server must be running before `corepack pnpm godmode db` can work. This repository does not install a database automatically and it never stores provider keys in the client bundle.
 
 ## CLI commands
 

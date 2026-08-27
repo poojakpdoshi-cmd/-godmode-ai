@@ -19,7 +19,7 @@ function missingLocalValues() {
 }
 
 function printUsage() {
-  console.log("GODMODE AI local CLI\n\nCommands:\n  godmode-ai init       Create a local .env from .env.example\n  godmode-ai doctor     Validate local prerequisites\n  godmode-ai db         Apply local database migrations\n  godmode-ai dev        Start loopback-only local app and open http://127.0.0.1:3000\n");
+  console.log("GODMODE AI local CLI\n\nCommands:\n  godmode-ai init       Create a local .env from local.env.template\n  godmode-ai doctor     Validate local prerequisites\n  godmode-ai db         Apply local database migrations\n  godmode-ai dev        Start loopback-only local app and open http://127.0.0.1:3000\n");
 }
 
 function openBrowser(url) {
