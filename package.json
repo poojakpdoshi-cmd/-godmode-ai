@@ -28,6 +28,8 @@
     "check": "tsc --noEmit",
     "format": "prettier --write .",
     "test": "vitest run",
+    "bench:payload": "tsx bench/payload-bench.ts",
+    "bench:boot": "node bench/boot-bench.mjs",
     "db:push": "drizzle-kit generate && drizzle-kit migrate",
     "godmode": "node ./bin/godmode-ai.mjs",
     "local": "GODMODE_LOCAL_MODE=true node ./bin/godmode-ai.mjs dev"
