@@ -1,0 +1,49 @@
+# Optional local database for GODMODE AI.
+#
+# The app is loopback-only and needs a MySQL/TiDB server before
+# `pnpm godmode db` can run. If you already have one, skip this file and point
+# DATABASE_URL at it instead.
+#
+#   docker compose up -d        # start
+#   docker compose down         # stop (data is kept in a named volume)
+#
+# These credentials are local development defaults, not secrets. Change them if
+# this port is ever reachable from outside your machine — it is published on
+# 127.0.0.1 only.
+
+services:
+  godmode-mysql:
+    image: mysql:8.4
+    container_name: godmode-mysql
+    restart: unless-stopped
+    # Bound to loopback to match the app's own loopback-only posture.
+    ports:
+      - "127.0.0.1:3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: godmode_local_dev
+      MYSQL_DATABASE: godmode_ai
+      MYSQL_USER: godmode
+      MYSQL_PASSWORD: godmode_local_dev
+    volumes:
+      - godmode-mysql-data:/var/lib/mysql
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "mysqladmin",
+          "ping",
+          "-h",
+          "127.0.0.1",
+          "-uroot",
+          "-pgodmode_local_dev",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    command:
+      # Matches the utf8mb4 charset used by the checked-in migrations.
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+
+volumes:
+  godmode-mysql-data:

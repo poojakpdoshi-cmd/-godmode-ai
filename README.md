@@ -41,14 +41,36 @@ Then open [http://127.0.0.1:3000](http://127.0.0.1:3000). In **Configuration**, 
 
 > A local MySQL or TiDB server must be running before `corepack pnpm godmode db` can work. This repository does not install a database automatically and it never stores provider keys in the client bundle.
 
+### Local database (optional, one command)
+
+If you do not already have MySQL running, a loopback-only instance is included:
+
+```powershell
+docker compose up -d
+```
+
+Then use this `DATABASE_URL` in `.env`:
+
+```
+DATABASE_URL=mysql://godmode:godmode_local_dev@127.0.0.1:3306/godmode_ai
+```
+
+Those are local development defaults, not secrets. The published port is bound to `127.0.0.1` only.
+
+### Reachability
+
+The local server binds to `127.0.0.1` by design. It is reachable from the same machine's browser at [http://127.0.0.1:3000](http://127.0.0.1:3000) and from nowhere else — it will not respond on your LAN address, and it cannot be driven from a hosted preview or container dashboard. This is intentional, since the app stores encrypted provider keys in the local database.
+
 ## CLI commands
 
-| Command | Purpose |
-|---|---|
-| `pnpm godmode init` | Creates `.env` from the safe template. |
+Always invoke these through pnpm (`corepack pnpm godmode …`). Do **not** run `npx godmode` — `npx` resolves an unrelated third-party package from the public registry instead of this repository's CLI.
+
+| Command               | Purpose                                              |
+| --------------------- | ---------------------------------------------------- |
+| `pnpm godmode init`   | Creates `.env` from the safe template.               |
 | `pnpm godmode doctor` | Checks local prerequisites without printing secrets. |
-| `pnpm godmode db` | Generates and applies local database migrations. |
-| `pnpm godmode dev` | Starts the loopback-only local development server. |
+| `pnpm godmode db`     | Generates and applies local database migrations.     |
+| `pnpm godmode dev`    | Starts the loopback-only local development server.   |
 
 ## Security notes
 
